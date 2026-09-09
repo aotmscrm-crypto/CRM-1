@@ -60,6 +60,34 @@ const renderPreviewBody = (text, sampleValues = []) => {
   return replaced;
 };
 
+// Helper to clean and extract 10-digit phone number for indexing
+const getCleanPhone10 = (p) => {
+  if (!p) return '';
+  const digits = String(p).replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
+
+// Helper to format date header label (Today, Yesterday, or Sep 9, 2026)
+const getChatDateHeaderLabel = (dateObj) => {
+  if (!dateObj) return 'Today';
+  const d = new Date(dateObj);
+  if (isNaN(d.getTime())) return 'Today';
+
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  const isSameDay = (d1, d2) =>
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate();
+
+  if (isSameDay(d, today)) return 'Today';
+  if (isSameDay(d, yesterday)) return 'Yesterday';
+
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
 export default function WhatsappMessage() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -384,12 +412,14 @@ export default function WhatsappMessage() {
   // Real-time Chat Logs Fetcher for Selected Contact
   const fetchChatLogs = async (phone) => {
     if (!phone) return;
+    const cleanKey = getCleanPhone10(phone);
     try {
       const res = await fetch(`${getApiBase()}/api/whatsapp/messages?phone=${phone}`);
       const data = await res.json();
       if (res.ok && data.success && Array.isArray(data.logs)) {
         const formatted = data.logs.map(log => {
           const isIncoming = log.direction === 'INCOMING' || log.status === 'received';
+          const timestampDate = log.timestamp ? new Date(log.timestamp) : new Date();
           return {
             id: log.wamid || log._id,
             type: isIncoming ? 'INCOMING' : (log.templateName ? 'OUTGOING_TEMPLATE' : 'OUTGOING'),
@@ -398,7 +428,8 @@ export default function WhatsappMessage() {
             templateName: log.templateName || '',
             header_image_url: log.headerImageUrl || '',
             buttons: log.buttons || [],
-            time: new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            rawTimestamp: timestampDate,
+            time: timestampDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             status: log.status || 'sent', // sent, delivered, read, failed, received
             errorCode: log.errorCode,
             errorMessage: log.errorMessage
@@ -407,7 +438,7 @@ export default function WhatsappMessage() {
 
         setChatLogMap(prev => ({
           ...prev,
-          [phone]: formatted
+          [cleanKey]: formatted
         }));
       }
     } catch (err) {
@@ -507,17 +538,20 @@ export default function WhatsappMessage() {
         setChatMessageText('');
 
         // Optimistic UI Update: Display message on screen immediately!
+        const cleanKey = getCleanPhone10(targetPhone);
+        const now = new Date();
         const tempMsg = {
           id: `opt_${Date.now()}`,
           type: 'OUTGOING',
           text: msgText,
           senderName: 'Business',
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          rawTimestamp: now,
+          time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           status: 'sent'
         };
         setChatLogMap(prev => ({
           ...prev,
-          [targetPhone]: [...(prev[targetPhone] || []), tempMsg]
+          [cleanKey]: [...(prev[cleanKey] || []), tempMsg]
         }));
 
         setTimeout(() => fetchChatLogs(targetPhone), 500);
@@ -569,6 +603,8 @@ export default function WhatsappMessage() {
         }
 
         // Optimistic UI Update: Display rich template message on screen immediately!
+        const cleanKey = getCleanPhone10(targetPhone);
+        const now = new Date();
         const tempMsg = {
           id: `opt_tmpl_${Date.now()}`,
           type: 'OUTGOING_TEMPLATE',
@@ -577,12 +613,13 @@ export default function WhatsappMessage() {
           header_image_url: tmpl?.header_image_url || tmpl?.imageUrl || '',
           buttons: parsedButtons,
           senderName: 'Business',
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          rawTimestamp: now,
+          time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           status: 'sent'
         };
         setChatLogMap(prev => ({
           ...prev,
-          [targetPhone]: [...(prev[targetPhone] || []), tempMsg]
+          [cleanKey]: [...(prev[cleanKey] || []), tempMsg]
         }));
 
         setTimeout(() => fetchChatLogs(targetPhone), 1000);
@@ -1189,87 +1226,129 @@ export default function WhatsappMessage() {
                   </div>
 
                   {/* Chat Messages (Sender Outgoing vs Receiver Incoming) */}
-                  {(chatLogMap[selectedContact.phone] || []).map((msg) => {
-                    const isIncoming = msg.type === 'INCOMING' || msg.status === 'received';
+                  {(() => {
+                    const activeCleanKey = getCleanPhone10(selectedContact?.phone);
+                    const messages = chatLogMap[activeCleanKey] || [];
+                    let lastDateLabel = null;
 
-                    return (
-                      <div key={msg.id} className={`flex flex-col ${isIncoming ? 'items-start' : 'items-end'}`}>
-                        <div className={`p-3.5 rounded-2xl max-w-[85%] text-xs space-y-2 border shadow-xs ${
-                          isIncoming
-                            ? 'bg-white rounded-tl-none border-slate-200/80 text-slate-900'
-                            : 'bg-[#d9fdd3] rounded-tr-none border-[#b4f5a9] text-slate-900'
-                        }`}>
-                          {/* Sender Name badge for incoming messages */}
-                          {isIncoming && (
-                            <div className="text-[10px] font-extrabold text-[#00a884] flex items-center gap-1 font-mono">
-                              <span>👤 {msg.senderName || selectedContact.name || 'Customer'}</span>
-                              <span className="text-[9px] text-slate-500">(Received Reply)</span>
-                            </div>
-                          )}
-
-                          {msg.header_image_url && (
-                            <img src={msg.header_image_url} alt="Header" className="w-full h-36 object-cover rounded-xl border border-slate-200" />
-                          )}
-
-                          {msg.templateName && (
-                            <span className="px-2.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-100/80 text-emerald-800 border border-emerald-300 uppercase inline-block">
-                              {msg.templateName}
-                            </span>
-                          )}
-
-                          <p className="font-medium whitespace-pre-wrap leading-relaxed text-slate-900">
-                            {msg.text}
-                          </p>
-                          
-                          {/* Production Level WhatsApp Interactive Buttons */}
-                          {Array.isArray(msg.buttons) && msg.buttons.length > 0 && (
-                            <div className="pt-2 border-t border-slate-300/60 divide-y divide-slate-300/60 -mx-3.5 -mb-1 mt-2">
-                              {msg.buttons.map((b, i) => {
-                                const btnType = b.type || (b.url ? 'URL' : (b.phone_number ? 'PHONE_NUMBER' : 'QUICK_REPLY'));
-                                const btnLabel = b.text || b.displayText || b.title || b.url || b.phone_number || 'Interactive Button';
-
-                                return (
-                                  <a
-                                    key={i}
-                                    href={btnType === 'URL' ? (b.url || '#') : (btnType === 'PHONE_NUMBER' ? `tel:${b.phone_number}` : '#')}
-                                    target={btnType === 'URL' ? '_blank' : '_self'}
-                                    rel="noreferrer"
-                                    className="w-full py-2 px-3 text-center text-xs font-black text-[#00a884] hover:bg-slate-100/60 transition-colors flex items-center justify-center gap-1.5 cursor-pointer first:pt-2"
-                                  >
-                                    {btnType === 'PHONE_NUMBER' ? (
-                                      <Phone className="w-3.5 h-3.5 text-[#00a884]" />
-                                    ) : btnType === 'URL' ? (
-                                      <ExternalLink className="w-3.5 h-3.5 text-[#00a884]" />
-                                    ) : (
-                                      <Send className="w-3.5 h-3.5 text-[#00a884]" />
-                                    )}
-                                    <span>{btnLabel}</span>
-                                  </a>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          {/* Message Status and Double Checkmarks */}
-                          <div className="flex items-center justify-end gap-1.5 text-[9px] font-mono text-slate-500">
-                            <span>{msg.time}</span>
-                            {!isIncoming && (
-                              <span className={`font-bold ${
-                                msg.status === 'read' ? 'text-sky-600' :
-                                msg.status === 'delivered' ? 'text-slate-500' :
-                                msg.status === 'failed' ? 'text-rose-500' :
-                                'text-slate-500'
-                              }`}>
-                                {msg.status === 'read' ? '✓✓ Read' :
-                                 msg.status === 'delivered' ? '✓✓ Delivered' :
-                                 msg.status === 'failed' ? '✖ Failed' : '✓ Sent'}
-                              </span>
-                            )}
-                          </div>
+                    if (messages.length === 0) {
+                      return (
+                        <div className="text-center py-12 text-xs text-slate-500 font-medium">
+                          No message history yet. Type a message below to start chatting!
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    }
+
+                    return messages.map((msg) => {
+                      const isIncoming = msg.type === 'INCOMING' || msg.status === 'received';
+                      const currentDateLabel = getChatDateHeaderLabel(msg.rawTimestamp);
+                      const showDateHeader = currentDateLabel !== lastDateLabel;
+                      if (showDateHeader) {
+                        lastDateLabel = currentDateLabel;
+                      }
+
+                      return (
+                        <React.Fragment key={msg.id}>
+                          {showDateHeader && (
+                            <div className="flex items-center justify-center my-3">
+                              <span className="px-3.5 py-1 rounded-lg bg-white/95 text-slate-600 text-[10px] font-black shadow-2xs border border-slate-200 uppercase tracking-wider font-mono">
+                                📅 {currentDateLabel}
+                              </span>
+                            </div>
+                          )}
+
+                          <div className={`flex flex-col ${isIncoming ? 'items-start' : 'items-end'}`}>
+                            <div className={`p-3.5 rounded-2xl max-w-[85%] text-xs space-y-2 border shadow-xs ${
+                              isIncoming
+                                ? 'bg-white rounded-tl-none border-slate-200/80 text-slate-900'
+                                : 'bg-[#d9fdd3] rounded-tr-none border-[#b4f5a9] text-slate-900'
+                            }`}>
+                              {/* Sender Name badge for incoming messages */}
+                              {isIncoming && (
+                                <div className="text-[10px] font-extrabold text-[#00a884] flex items-center gap-1 font-mono">
+                                  <span>👤 {msg.senderName || selectedContact.name || 'Customer'}</span>
+                                  <span className="text-[9px] text-slate-500">(Received Reply)</span>
+                                </div>
+                              )}
+
+                              {msg.header_image_url && (
+                                <img src={msg.header_image_url} alt="Header" className="w-full h-36 object-cover rounded-xl border border-slate-200" />
+                              )}
+
+                              {msg.templateName && (
+                                <span className="px-2.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-100/80 text-emerald-800 border border-emerald-300 uppercase inline-block">
+                                  {msg.templateName}
+                                </span>
+                              )}
+
+                              <p className="font-medium whitespace-pre-wrap leading-relaxed text-slate-900">
+                                {msg.text}
+                              </p>
+                              
+                              {/* Production Level WhatsApp Interactive Buttons */}
+                              {Array.isArray(msg.buttons) && msg.buttons.length > 0 && (
+                                <div className="pt-2 border-t border-slate-300/60 divide-y divide-slate-300/60 -mx-3.5 -mb-1 mt-2">
+                                  {msg.buttons.map((b, i) => {
+                                    const btnType = b.type || (b.url ? 'URL' : (b.phone_number ? 'PHONE_NUMBER' : 'QUICK_REPLY'));
+                                    const btnLabel = b.text || b.displayText || b.title || b.url || b.phone_number || 'Interactive Button';
+
+                                    return (
+                                      <a
+                                        key={i}
+                                        href={btnType === 'URL' ? (b.url || '#') : (btnType === 'PHONE_NUMBER' ? `tel:${b.phone_number}` : '#')}
+                                        target={btnType === 'URL' ? '_blank' : '_self'}
+                                        rel="noreferrer"
+                                        className="w-full py-2 px-3 text-center text-xs font-black text-[#00a884] hover:bg-slate-100/60 transition-colors flex items-center justify-center gap-1.5 cursor-pointer first:pt-2"
+                                      >
+                                        {btnType === 'PHONE_NUMBER' ? (
+                                          <Phone className="w-3.5 h-3.5 text-[#00a884]" />
+                                        ) : btnType === 'URL' ? (
+                                          <ExternalLink className="w-3.5 h-3.5 text-[#00a884]" />
+                                        ) : (
+                                          <Send className="w-3.5 h-3.5 text-[#00a884]" />
+                                        )}
+                                        <span>{btnLabel}</span>
+                                      </a>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Message Status and Double Checkmarks */}
+                              <div className="flex items-center justify-end gap-1.5 text-[9px] font-mono text-slate-500">
+                                <span>{msg.time}</span>
+                                {!isIncoming && (
+                                  <span className="flex items-center gap-1 font-mono font-bold" title={`Status: ${msg.status}`}>
+                                    {msg.status === 'read' ? (
+                                      <span className="text-sky-500 font-extrabold flex items-center gap-0.5" title="Read by customer (Blue Tick)">
+                                        <span className="text-[11px] leading-none">✓✓</span>
+                                        <span className="text-[8px] font-sans">Read</span>
+                                      </span>
+                                    ) : msg.status === 'delivered' ? (
+                                      <span className="text-slate-400 font-bold flex items-center gap-0.5" title="Delivered to phone">
+                                        <span className="text-[11px] leading-none">✓✓</span>
+                                        <span className="text-[8px] font-sans">Delivered</span>
+                                      </span>
+                                    ) : msg.status === 'failed' ? (
+                                      <span className="text-rose-500 font-bold flex items-center gap-0.5" title={msg.errorMessage || "Failed"}>
+                                        <span className="text-[11px] leading-none">✖</span>
+                                        <span className="text-[8px] font-sans">Failed</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 font-bold flex items-center gap-0.5" title="Sent to server">
+                                        <span className="text-[11px] leading-none">✓</span>
+                                        <span className="text-[8px] font-sans">Sent</span>
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
 
                   <div ref={chatBottomRef} />
                 </div>
