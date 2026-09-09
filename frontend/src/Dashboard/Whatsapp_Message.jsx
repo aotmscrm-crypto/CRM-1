@@ -31,6 +31,35 @@ import { IoLogoWhatsapp as WhatsApp } from 'react-icons/io5';
 
 import ConfirmModal from '../Components/ui/ConfirmModal';
 
+// Helper function to render body text with live variable replacements
+const renderPreviewBody = (text, sampleValues = []) => {
+  if (!text) return '';
+  let samples = [];
+  if (Array.isArray(sampleValues)) {
+    samples = sampleValues;
+  } else if (typeof sampleValues === 'string' && sampleValues.trim()) {
+    samples = sampleValues.split(',').map(s => s.trim());
+  }
+
+  let replaced = String(text);
+  
+  // Replace numbered variables {{1}}, {{2}}, {{3}}... with sample values if provided
+  samples.forEach((val, idx) => {
+    if (val !== undefined && val !== null && val !== '') {
+      const regex = new RegExp(`\\{\\{${idx + 1}\\}\\}`, 'g');
+      replaced = replaced.replace(regex, val);
+    }
+  });
+
+  // Replace any remaining {{1}}, {{2}} or {{variable}} placeholders with sample or fallback text
+  replaced = replaced.replace(/\{\{(\d+)\}\}/g, (match, p1) => {
+    const num = parseInt(p1, 10) - 1;
+    return samples[num] || `[Var ${p1}]`;
+  });
+
+  return replaced;
+};
+
 export default function WhatsappMessage() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
