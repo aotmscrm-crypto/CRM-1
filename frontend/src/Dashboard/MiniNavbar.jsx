@@ -17,15 +17,11 @@ import { IoLogoInstagram as Instagram } from 'react-icons/io5';
 
 export const navTabs = [
   { id: 'users', label: 'User Management', icon: Users },
-  { id: 'employees', label: 'Employees', icon: Briefcase },
-  { id: 'leads', label: 'Leads PipeLine', icon: Target },
   { id: 'todos', label: 'Todo List', icon: CheckSquare },
   { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'whatsapp', label: 'Whatsapp Message', icon: MessageSquare },
   { id: 'contacts', label: 'Contacts', icon: BookUser },
   { id: 'whatsapp-blast', label: 'Whatsapp Blast', icon: Send },
-  { id: 'instagram', label: 'Instagram', icon: Instagram },
-  { id: 'pay-sip', label: 'Pay_SIP', icon: CreditCard },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -38,7 +34,7 @@ export default function MiniNavbar({ activeTab, setActiveTab, currentUser }) {
   const visibleTabs = navTabs.filter((tab) => {
     if (role === 'admin') return true;
     if (role === 'manager') {
-      return ['leads', 'contacts', 'whatsapp-blast', 'whatsapp', 'todos', 'employees'].includes(tab.id);
+      return ['contacts', 'whatsapp-blast', 'whatsapp', 'todos'].includes(tab.id);
     }
     if (role === 'employee') {
       return ['whatsapp-blast', 'whatsapp', 'contacts', 'todos'].includes(tab.id);
