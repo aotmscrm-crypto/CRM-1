@@ -113,11 +113,11 @@ export default function DashboardPage() {
   const [whatsappForm, setWhatsappForm] = useState(() => {
     const saved = localStorage.getItem('aotms_whatsapp_config');
     return saved ? JSON.parse(saved) : {
-      accessToken: 'EAARKMMGqXuUBSbXwBAtdjoz4qv7JJWpsVhzpZABXJokhbZCIoJpqhre0ZCiQj5aFAuzZBa5BmnG1twOdZCI7kVO4YQAgcrTI0rIqvtqQL8w4fk3K7yp5mwKQ4OPIGJ65Q1rZAffI2R8bHitwTpeJB61sGlTm9WvKBoFNzjQolbCgEHyUhKH6Radr8ZBRZCZB1qsZC3ZCgZDZD',
-      phoneNumberId: '1340972425758369',
-      verifyToken: 'zest_eat_meta_verify_8f9q2a',
+      accessToken: '',
+      phoneNumberId: '',
+      verifyToken: 'zest_Eat',
       graphVersion: 'v19.0',
-      wabaId: '1026026910332703'
+      wabaId: ''
     };
   });
 
@@ -135,13 +135,13 @@ export default function DashboardPage() {
 
   const [copiedField, setCopiedField] = useState(null);
   const [metaConfig, setMetaConfig] = useState({
-    wabaId: '1026026910332703',
-    phoneId: '1340972425758369',
-    verifyToken: 'zest_eat_meta_verify_8f9q2a',
+    wabaId: '',
+    phoneId: '',
+    verifyToken: 'zest_Eat',
     version: 'v19.0',
     cloudinaryCloud: 'dlxveseav',
     status: 'CONNECTED',
-    hasToken: true
+    hasToken: false
   });
 
   const getApiBase = () => {
@@ -160,6 +160,16 @@ export default function DashboardPage() {
       const data = await res.json();
       if (res.ok && data && data.success) {
         setMetaConfig(data);
+        const saved = localStorage.getItem('aotms_whatsapp_config');
+        if (!saved) {
+          setWhatsappForm({
+            accessToken: data.maskedToken || '',
+            phoneNumberId: data.phoneId || '',
+            verifyToken: data.verifyToken || 'zest_Eat',
+            graphVersion: data.version || 'v19.0',
+            wabaId: data.wabaId || ''
+          });
+        }
       }
     } catch (err) {
       console.warn('Meta config fetch failed:', err);
@@ -843,14 +853,21 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        setWhatsappForm({
-                          accessToken: 'EAARKMMGqXuUBSbXwBAtdjoz4qv7JJWpsVhzpZABXJokhbZCIoJpqhre0ZCiQj5aFAuzZBa5BmnG1twOdZCI7kVO4YQAgcrTI0rIqvtqQL8w4fk3K7yp5mwKQ4OPIGJ65Q1rZAffI2R8bHitwTpeJB61sGlTm9WvKBoFNzjQolbCgEHyUhKH6Radr8ZBRZCZB1qsZC3ZCgZDZD',
-                          phoneNumberId: '1340972425758369',
-                          verifyToken: 'zest_eat_meta_verify_8f9q2a',
-                          graphVersion: 'v19.0',
-                          wabaId: '1026026910332703'
-                        });
+                      onClick={async () => {
+                        localStorage.removeItem('aotms_whatsapp_config');
+                        try {
+                          const apiBase = getApiBase();
+                          const res = await fetch(`${apiBase}/api/whatsapp/sync-env`, { method: 'POST' });
+                          const data = await res.json();
+                          if (data.success) {
+                            await fetchMetaConfig();
+                            alert('Meta credentials re-synced directly from backend .env!');
+                          } else {
+                            await fetchMetaConfig();
+                          }
+                        } catch (e) {
+                          await fetchMetaConfig();
+                        }
                       }}
                       className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs border border-emerald-200 flex items-center gap-1.5 transition-colors cursor-pointer"
                     >

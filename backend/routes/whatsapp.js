@@ -1,7 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { getStatus } = require('../utils/whatsappService');
-const { getMetaCredentials, updateMetaCredentials, verifyMetaConnection } = require('../utils/metaConfigHelper');
+const { getMetaCredentials, updateMetaCredentials, verifyMetaConnection, clearConfigCache } = require('../utils/metaConfigHelper');
 const MessageLog = require('../models/MessageLog');
 
 // ── GET current status ────────────────────────────────────────────────────────
@@ -51,7 +51,24 @@ router.get('/config', async (req, res) => {
       maskedToken,
       hasToken: Boolean(creds.token),
       version: creds.version || 'v19.0',
-      verifyToken: creds.verifyToken || 'zest_eat_meta_verify_8f9q2a'
+      verifyToken: creds.verifyToken || 'zest_Eat'
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Force flush MongoDB MetaConfig and re-sync with process.env
+router.post('/sync-env', async (req, res) => {
+  try {
+    const MetaConfig = require('../models/MetaConfig');
+    await MetaConfig.deleteMany({});
+    clearConfigCache();
+    const creds = await getMetaCredentials();
+    res.json({
+      success: true,
+      message: 'MongoDB MetaConfig cleared and re-synced directly with backend .env!',
+      config: creds
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
