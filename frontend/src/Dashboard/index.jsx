@@ -1023,12 +1023,12 @@ export default function DashboardPage() {
                       <input
                         type="text"
                         readOnly
-                        value="https://crm-fee1.onrender.com/api/integrations/whatsapp/webhook"
+                        value={`${getApiBase()}/api/whatsapp/webhook`}
                         className="flex-1 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-xs font-mono text-slate-800 select-all font-bold"
                       />
                       <button
                         type="button"
-                        onClick={() => copyToClipboard("https://crm-fee1.onrender.com/api/integrations/whatsapp/webhook")}
+                        onClick={() => copyToClipboard(`${getApiBase()}/api/whatsapp/webhook`)}
                         className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-black text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                       >
                         {copiedWebhook ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -1046,12 +1046,12 @@ export default function DashboardPage() {
                       <input
                         type="text"
                         readOnly
-                        value={whatsappForm.verifyToken || "aotms_meta_verify_secret_2026"}
+                        value={metaConfig.verifyToken || whatsappForm.verifyToken || "zest_Eat"}
                         className="flex-1 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-xs font-mono text-emerald-700 select-all font-extrabold"
                       />
                       <button
                         type="button"
-                        onClick={() => copyToClipboard(whatsappForm.verifyToken || "aotms_meta_verify_secret_2026")}
+                        onClick={() => copyToClipboard(metaConfig.verifyToken || whatsappForm.verifyToken || "zest_Eat")}
                         className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                       >
                         <Copy className="w-3.5 h-3.5" />

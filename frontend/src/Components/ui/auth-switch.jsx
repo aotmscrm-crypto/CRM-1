@@ -31,13 +31,13 @@ export const Component = ({ className, onClose }) => {
 
     try {
       // 1. Test against Render Backend Auth endpoint
-      const resRender = await fetch("https://crm-fee1.onrender.com/api/auth");
+      const resRender = await fetch("https://crm-1-62pl.onrender.com/api/auth");
       const dataRender = await resRender.json();
 
       // 2. Test client sign in attempt
       setTestResult({
         success: true,
-        endpoint: "https://crm-fee1.onrender.com/api/auth",
+        endpoint: "https://crm-1-62pl.onrender.com/api/auth",
         vercelUrl: "https://crm-1-peach.vercel.app/api/auth",
         service: dataRender.service || "Better Auth Gateway",
         status: dataRender.status || "ready",
