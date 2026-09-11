@@ -42,10 +42,10 @@ const runMetaBroadcast = async (template, phoneList) => {
       const wamid = sendRes?.messages?.[0]?.id || `tmpl_${Date.now()}_${i}`;
 
       const MessageLog = require('../models/MessageLog');
-      const bodyComp = Array.isArray(template.components) ? template.components.find(c => c.type === 'BODY') : null;
-      const headerComp = Array.isArray(template.components) ? template.components.find(c => c.type === 'HEADER') : null;
+      const bodyComp = Array.isArray(template.components) ? template.components.find(c => (c.type || '').toUpperCase() === 'BODY') : null;
+      const headerComp = Array.isArray(template.components) ? template.components.find(c => (c.type || '').toUpperCase() === 'HEADER') : null;
 
-      let tmplText = template.body_text || bodyComp?.text || template.message || template.title || 'Meta Template Message';
+      let tmplText = template.body_text || bodyComp?.text || template.message || template.title || (template.name ? `Template: ${template.name}` : 'Meta Template Message');
       let tmplHeaderImg = template.imageUrl || template.header_image_url || (headerComp?.example?.header_handle?.[0] || '');
 
       let parsedButtons = [];
@@ -56,7 +56,7 @@ const runMetaBroadcast = async (template, phoneList) => {
       }
 
       if ((!parsedButtons || parsedButtons.length === 0) && Array.isArray(template.components)) {
-        const btnComp = template.components.find(c => c.type === 'BUTTONS');
+        const btnComp = template.components.find(c => (c.type || '').toUpperCase() === 'BUTTONS');
         if (btnComp && Array.isArray(btnComp.buttons)) {
           parsedButtons = btnComp.buttons;
         }

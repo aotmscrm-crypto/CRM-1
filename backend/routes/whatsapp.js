@@ -255,6 +255,11 @@ router.post('/webhook', async (req, res) => {
                 pricing,
                 phoneId: incomingPhoneId,
                 wabaId: incomingWabaId
+              },
+              $setOnInsert: {
+                direction: 'OUTGOING',
+                text: 'WhatsApp Template Message',
+                templateName: 'Meta Template'
               }
             },
             { upsert: true, new: true }

@@ -187,7 +187,34 @@ router.post('/send-single-whatsapp', async (req, res) => {
     }
 
     const ConversationFlow = require('../utils/conversationFlow').ConversationFlow;
+    const MessageLog = require('../models/MessageLog');
     const sendRes = await ConversationFlow.startMetaTemplate(cleanP, template);
+    const wamid = sendRes?.messages?.[0]?.id || `lead_tmpl_${Date.now()}`;
+
+    const bodyComp = Array.isArray(template.components) ? template.components.find(c => (c.type || '').toUpperCase() === 'BODY') : null;
+    const headerComp = Array.isArray(template.components) ? template.components.find(c => (c.type || '').toUpperCase() === 'HEADER') : null;
+    let tmplText = template.body_text || bodyComp?.text || template.message || template.title || (template.name ? `Template: ${template.name}` : 'Meta Template Message');
+    let tmplHeaderImg = template.imageUrl || template.header_image_url || (headerComp?.example?.header_handle?.[0] || '');
+    let parsedButtons = [];
+    try { parsedButtons = typeof template.buttons === 'string' ? JSON.parse(template.buttons) : (template.buttons || []); } catch (e) { parsedButtons = []; }
+
+    await MessageLog.findOneAndUpdate(
+      { wamid },
+      {
+        $set: {
+          wamid,
+          phone: cleanP,
+          direction: 'OUTGOING',
+          status: 'sent',
+          text: tmplText,
+          templateName: template.name || 'Meta Template',
+          headerImageUrl: tmplHeaderImg,
+          buttons: parsedButtons,
+          timestamp: new Date()
+        }
+      },
+      { upsert: true, new: true }
+    );
     
     res.json({
       success: true,
@@ -260,12 +287,40 @@ router.post('/whatsapp-blast', async (req, res) => {
     console.log(`🚀 Dispatching WhatsApp Blast to ${phoneList.length} recipients for template '${template.name}'...`);
 
     const ConversationFlow = require('../utils/conversationFlow').ConversationFlow;
+    const MessageLog = require('../models/MessageLog');
     let successful = 0, failed = 0;
+
+    const bodyComp = Array.isArray(template.components) ? template.components.find(c => (c.type || '').toUpperCase() === 'BODY') : null;
+    const headerComp = Array.isArray(template.components) ? template.components.find(c => (c.type || '').toUpperCase() === 'HEADER') : null;
+    let tmplText = template.body_text || bodyComp?.text || template.message || template.title || (template.name ? `Template: ${template.name}` : 'Meta Template Message');
+    let tmplHeaderImg = template.imageUrl || template.header_image_url || (headerComp?.example?.header_handle?.[0] || '');
+    let parsedButtons = [];
+    try { parsedButtons = typeof template.buttons === 'string' ? JSON.parse(template.buttons) : (template.buttons || []); } catch (e) { parsedButtons = []; }
 
     for (let i = 0; i < phoneList.length; i++) {
       const p = phoneList[i];
       try {
-        await ConversationFlow.startMetaTemplate(p, template);
+        const sendRes = await ConversationFlow.startMetaTemplate(p, template);
+        const wamid = sendRes?.messages?.[0]?.id || `blast_${Date.now()}_${i}`;
+
+        await MessageLog.findOneAndUpdate(
+          { wamid },
+          {
+            $set: {
+              wamid,
+              phone: p,
+              direction: 'OUTGOING',
+              status: 'sent',
+              text: tmplText,
+              templateName: template.name || 'Meta Template',
+              headerImageUrl: tmplHeaderImg,
+              buttons: parsedButtons,
+              timestamp: new Date()
+            }
+          },
+          { upsert: true, new: true }
+        );
+
         successful++;
       } catch (err) {
         console.error(`❌ Failed blast to ${p}:`, err.message);

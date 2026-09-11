@@ -420,14 +420,35 @@ export default function WhatsappMessage() {
         const formatted = data.logs.map(log => {
           const isIncoming = log.direction === 'INCOMING' || log.status === 'received';
           const timestampDate = log.timestamp ? new Date(log.timestamp) : new Date();
+
+          let parsedButtons = [];
+          try {
+            parsedButtons = typeof log.buttons === 'string' ? JSON.parse(log.buttons) : (log.buttons || []);
+          } catch (e) {
+            parsedButtons = [];
+          }
+
+          let displayText = (log.text || '').trim();
+          if (!displayText || displayText === 'Sent Message') {
+            if (log.templateName) {
+              displayText = `Template Message (${log.templateName})`;
+            } else if (parsedButtons.length > 0) {
+              displayText = `Interactive Template Message`;
+            } else if (log.headerImageUrl) {
+              displayText = `Template Message with Media`;
+            } else {
+              displayText = isIncoming ? 'Incoming message' : 'WhatsApp Template Message';
+            }
+          }
+
           return {
             id: log.wamid || log._id,
             type: isIncoming ? 'INCOMING' : (log.templateName ? 'OUTGOING_TEMPLATE' : 'OUTGOING'),
-            text: log.text || (isIncoming ? 'Incoming message' : 'Sent Message'),
+            text: displayText,
             senderName: log.senderName || (isIncoming ? 'Customer' : 'Business'),
             templateName: log.templateName || '',
             header_image_url: log.headerImageUrl || '',
-            buttons: log.buttons || [],
+            buttons: parsedButtons,
             rawTimestamp: timestampDate,
             time: timestampDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             status: log.status || 'sent', // sent, delivered, read, failed, received
