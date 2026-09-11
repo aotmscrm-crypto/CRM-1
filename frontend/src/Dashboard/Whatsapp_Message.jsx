@@ -1268,6 +1268,41 @@ export default function WhatsappMessage() {
                         lastDateLabel = currentDateLabel;
                       }
 
+                      // Find matching template in templates state if templateName is attached
+                      const matchingTemplate = msg.templateName
+                        ? templates.find(t =>
+                            (t.name || '').toLowerCase() === (msg.templateName || '').toLowerCase() ||
+                            (t.id || '').toLowerCase() === (msg.templateName || '').toLowerCase() ||
+                            (t._id || '').toLowerCase() === (msg.templateName || '').toLowerCase()
+                          )
+                        : null;
+
+                      // Derived Header Image
+                      const displayHeaderImg = msg.header_image_url || matchingTemplate?.header_image_url || matchingTemplate?.header_content || (typeof matchingTemplate?.imageUrl === 'string' && matchingTemplate.imageUrl.startsWith('http') ? matchingTemplate.imageUrl : '');
+
+                      // Derived Buttons Array (check log buttons first, then fallback to template buttons)
+                      let displayButtons = (Array.isArray(msg.buttons) && msg.buttons.length > 0)
+                        ? msg.buttons
+                        : (matchingTemplate?.buttons || []);
+
+                      if (typeof displayButtons === 'string') {
+                        try { displayButtons = JSON.parse(displayButtons); } catch { displayButtons = []; }
+                      }
+                      if ((!displayButtons || displayButtons.length === 0) && matchingTemplate?.components) {
+                        const btnComp = matchingTemplate.components.find(c => (c.type || '').toUpperCase() === 'BUTTONS');
+                        if (btnComp && Array.isArray(btnComp.buttons)) displayButtons = btnComp.buttons;
+                      }
+
+                      // Derived Body Text
+                      let displayBodyText = (msg.text && msg.text !== 'Sent Message' && msg.text !== 'WhatsApp Template Message')
+                        ? msg.text
+                        : (matchingTemplate?.body_text || matchingTemplate?.message || 'Welcome to AOTMS Enterprise Solutions.');
+
+                      // Derived Footer Text
+                      const displayFooterText = matchingTemplate?.footer_text || matchingTemplate?.footer || '';
+
+                      const isTemplateMsg = Boolean(msg.templateName || msg.type === 'OUTGOING_TEMPLATE' || displayHeaderImg || (displayButtons && displayButtons.length > 0));
+
                       return (
                         <React.Fragment key={msg.id}>
                           {showDateHeader && (
@@ -1279,39 +1314,100 @@ export default function WhatsappMessage() {
                           )}
 
                           <div className={`flex flex-col ${isIncoming ? 'items-start' : 'items-end'}`}>
-                            <div className={`p-3.5 rounded-2xl max-w-[85%] text-xs space-y-2 border shadow-xs ${
+                            <div className={`rounded-2xl text-xs space-y-2 border shadow-xs overflow-hidden ${
+                              isTemplateMsg ? 'max-w-[340px] sm:max-w-[360px] w-full p-0' : 'p-3.5 max-w-[80%]'
+                            } ${
                               isIncoming
                                 ? 'bg-white rounded-tl-none border-slate-200/80 text-slate-900'
                                 : 'bg-[#d9fdd3] rounded-tr-none border-[#b4f5a9] text-slate-900'
                             }`}>
-                              {/* Sender Name badge for incoming messages */}
-                              {isIncoming && (
-                                <div className="text-[10px] font-extrabold text-[#00a884] flex items-center gap-1 font-mono">
-                                  <span>👤 {msg.senderName || selectedContact.name || 'Customer'}</span>
-                                  <span className="text-[9px] text-slate-500">(Received Reply)</span>
+                              {/* Header Image Header for Template */}
+                              {displayHeaderImg && (
+                                <div className="w-full bg-slate-900/10 overflow-hidden relative">
+                                  <img 
+                                    src={displayHeaderImg} 
+                                    alt="Header" 
+                                    className="w-full h-44 object-cover" 
+                                  />
                                 </div>
                               )}
 
-                              {msg.header_image_url && (
-                                <img src={msg.header_image_url} alt="Header" className="w-full h-36 object-cover rounded-xl border border-slate-200" />
-                              )}
+                              <div className={isTemplateMsg ? 'p-3.5 space-y-2' : ''}>
+                                {/* Sender Name badge for incoming messages */}
+                                {isIncoming && (
+                                  <div className="text-[10px] font-extrabold text-[#00a884] flex items-center gap-1 font-mono">
+                                    <span>👤 {msg.senderName || selectedContact.name || 'Customer'}</span>
+                                    <span className="text-[9px] text-slate-500">(Received Reply)</span>
+                                  </div>
+                                )}
 
-                              {msg.templateName && (
-                                <span className="px-2.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-100/80 text-emerald-800 border border-emerald-300 uppercase inline-block">
-                                  {msg.templateName}
-                                </span>
-                              )}
+                                {/* Non-image header text if present */}
+                                {!displayHeaderImg && matchingTemplate?.header_text && (
+                                  <h4 className="font-extrabold text-slate-900 text-xs">
+                                    {matchingTemplate.header_text}
+                                  </h4>
+                                )}
 
-                              <p className="font-medium whitespace-pre-wrap leading-relaxed text-slate-900">
-                                {msg.text}
-                              </p>
-                              
+                                {msg.templateName && (
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-100/90 text-emerald-800 border border-emerald-300/80 uppercase inline-block shadow-2xs">
+                                      {msg.templateName}
+                                    </span>
+                                    {matchingTemplate?.category && (
+                                      <span className="px-1.5 py-0.2 rounded text-[8px] font-mono font-bold bg-slate-200/80 text-slate-700 uppercase">
+                                        {matchingTemplate.category}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                <p className="font-medium whitespace-pre-wrap leading-relaxed text-slate-900">
+                                  {displayBodyText}
+                                </p>
+
+                                {displayFooterText && (
+                                  <p className="text-[10px] text-slate-500 font-mono italic pt-1 border-t border-slate-300/40">
+                                    {displayFooterText}
+                                  </p>
+                                )}
+
+                                {/* Message Status and Double Checkmarks */}
+                                <div className="flex items-center justify-end gap-1.5 text-[9px] font-mono text-slate-500 pt-0.5">
+                                  <span>{msg.time}</span>
+                                  {!isIncoming && (
+                                    <span className="flex items-center gap-1 font-mono font-bold" title={`Status: ${msg.status}`}>
+                                      {msg.status === 'read' ? (
+                                        <span className="text-sky-500 font-extrabold flex items-center gap-0.5" title="Read by customer (Blue Tick)">
+                                          <span className="text-[11px] leading-none">✓✓</span>
+                                          <span className="text-[8px] font-sans">Read</span>
+                                        </span>
+                                      ) : msg.status === 'delivered' ? (
+                                        <span className="text-slate-400 font-bold flex items-center gap-0.5" title="Delivered to phone">
+                                          <span className="text-[11px] leading-none">✓✓</span>
+                                          <span className="text-[8px] font-sans">Delivered</span>
+                                        </span>
+                                      ) : msg.status === 'failed' ? (
+                                        <span className="text-rose-500 font-bold flex items-center gap-0.5" title={msg.errorMessage || "Failed"}>
+                                          <span className="text-[11px] leading-none">✖</span>
+                                          <span className="text-[8px] font-sans">Failed</span>
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-400 font-bold flex items-center gap-0.5" title="Sent to server">
+                                          <span className="text-[11px] leading-none">✓</span>
+                                          <span className="text-[8px] font-sans">Sent</span>
+                                        </span>
+                                      )}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
                               {/* Production Level WhatsApp Interactive Buttons */}
-                              {Array.isArray(msg.buttons) && msg.buttons.length > 0 && (
-                                <div className="pt-2 border-t border-slate-300/60 divide-y divide-slate-300/60 -mx-3.5 -mb-1 mt-2">
-                                  {msg.buttons.map((b, i) => {
+                              {displayButtons && displayButtons.length > 0 && (
+                                <div className="border-t border-slate-300/70 divide-y divide-slate-300/70 bg-white/50">
+                                  {displayButtons.map((b, i) => {
                                     const btnType = b.type || (b.url ? 'URL' : (b.phone_number ? 'PHONE_NUMBER' : 'QUICK_REPLY'));
-                                    const btnLabel = b.text || b.displayText || b.title || b.url || b.phone_number || 'Interactive Button';
+                                    const btnLabel = b.text || b.displayText || b.title || b.url || b.phone_number || 'Interactive Action';
 
                                     return (
                                       <a
@@ -1319,7 +1415,7 @@ export default function WhatsappMessage() {
                                         href={btnType === 'URL' ? (b.url || '#') : (btnType === 'PHONE_NUMBER' ? `tel:${b.phone_number}` : '#')}
                                         target={btnType === 'URL' ? '_blank' : '_self'}
                                         rel="noreferrer"
-                                        className="w-full py-2 px-3 text-center text-xs font-black text-[#00a884] hover:bg-slate-100/60 transition-colors flex items-center justify-center gap-1.5 cursor-pointer first:pt-2"
+                                        className="w-full py-2.5 px-3 text-center text-xs font-extrabold text-[#00a884] hover:bg-slate-100/70 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                                       >
                                         {btnType === 'PHONE_NUMBER' ? (
                                           <Phone className="w-3.5 h-3.5 text-[#00a884]" />
@@ -1334,36 +1430,6 @@ export default function WhatsappMessage() {
                                   })}
                                 </div>
                               )}
-
-                              {/* Message Status and Double Checkmarks */}
-                              <div className="flex items-center justify-end gap-1.5 text-[9px] font-mono text-slate-500">
-                                <span>{msg.time}</span>
-                                {!isIncoming && (
-                                  <span className="flex items-center gap-1 font-mono font-bold" title={`Status: ${msg.status}`}>
-                                    {msg.status === 'read' ? (
-                                      <span className="text-sky-500 font-extrabold flex items-center gap-0.5" title="Read by customer (Blue Tick)">
-                                        <span className="text-[11px] leading-none">✓✓</span>
-                                        <span className="text-[8px] font-sans">Read</span>
-                                      </span>
-                                    ) : msg.status === 'delivered' ? (
-                                      <span className="text-slate-400 font-bold flex items-center gap-0.5" title="Delivered to phone">
-                                        <span className="text-[11px] leading-none">✓✓</span>
-                                        <span className="text-[8px] font-sans">Delivered</span>
-                                      </span>
-                                    ) : msg.status === 'failed' ? (
-                                      <span className="text-rose-500 font-bold flex items-center gap-0.5" title={msg.errorMessage || "Failed"}>
-                                        <span className="text-[11px] leading-none">✖</span>
-                                        <span className="text-[8px] font-sans">Failed</span>
-                                      </span>
-                                    ) : (
-                                      <span className="text-slate-400 font-bold flex items-center gap-0.5" title="Sent to server">
-                                        <span className="text-[11px] leading-none">✓</span>
-                                        <span className="text-[8px] font-sans">Sent</span>
-                                      </span>
-                                    )}
-                                  </span>
-                                )}
-                              </div>
                             </div>
                           </div>
                         </React.Fragment>
