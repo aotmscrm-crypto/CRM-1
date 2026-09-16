@@ -168,7 +168,7 @@ router.post('/webhook', async (req, res) => {
         if (cleanP.startsWith('91') && cleanP.length === 12) cleanP = cleanP.slice(2);
 
         try {
-          await MessageLog.findOneAndUpdate(
+          const savedLog = await MessageLog.findOneAndUpdate(
             { wamid },
             { 
               $set: {
@@ -189,7 +189,6 @@ router.post('/webhook', async (req, res) => {
           // Auto-upsert Contact in MongoDB so incoming message senders appear in contacts list
           const Contact = require('../models/Contact');
           const updateObj = { lastStatus: 'received', updatedAt: new Date() };
-          // Note: Bio Name is NOT added/overwritten as requested by user
 
           await Contact.findOneAndUpdate(
             { phone: cleanP },
@@ -203,6 +202,59 @@ router.post('/webhook', async (req, res) => {
             },
             { upsert: true, new: true }
           );
+
+          // ⚡ WEBSOCKET REAL-TIME BROADCAST (Incoming Message)
+          const io = req.app.get('io');
+          if (io) {
+            io.emit('new_message', savedLog);
+            console.log(`⚡ [WEBSOCKET] Emitted 'new_message' for ${cleanP}`);
+          }
+
+          // 🤖 AUTOMATION AUTOREPLY BOT ENGINE
+          const lowerText = (text || '').toLowerCase().trim();
+          let autoReplyText = '';
+
+          if (['hi', 'hello', 'hey', 'namaste', 'start'].some(k => lowerText.includes(k))) {
+            autoReplyText = `Hello ${senderName}! 👋\nWelcome to Zest Eat Enterprise Solutions.\n\nHow can we help you today?\n1️⃣ Type *MENU* to view catalog\n2️⃣ Type *SUPPORT* for customer care\n3️⃣ Type *PAYMENT* for billing info`;
+          } else if (lowerText.includes('menu') || lowerText.includes('price') || lowerText.includes('catalog')) {
+            autoReplyText = `🍽️ Check out our official catalog & order link:\nhttps://www.zesteat.in/\n\nNeed help with custom packages? Reply *SUPPORT*!`;
+          } else if (lowerText.includes('support') || lowerText.includes('help') || lowerText.includes('call')) {
+            autoReplyText = `📞 Customer Support Desk:\nCall/WhatsApp: +91 8566856789\nWebsite: https://www.zesteat.in/`;
+          } else if (lowerText.includes('pay') || lowerText.includes('billing') || lowerText.includes('upi')) {
+            autoReplyText = `💳 Secure Payment & Invoice Portal:\nVisit: https://www.zesteat.in/\nOr contact our finance team at +91 8566856789.`;
+          } else {
+            // General catch-all AutoReply for any other incoming message
+            autoReplyText = `Hello ${senderName}! 👋 Thank you for messaging Zest Eat.\nWe received your message: "${text}".\nOur team will assist you shortly, or visit https://www.zesteat.in/ for instant services.`;
+          }
+
+          if (autoReplyText) {
+            try {
+              const { sendTextMessage } = require('../utils/whatsappService');
+              const sendResult = await sendTextMessage(cleanP, autoReplyText);
+              const replyWamid = sendResult?.messages?.[0]?.id || `reply_${Date.now()}`;
+              
+              const autoReplyLog = await MessageLog.create({
+                wamid: replyWamid,
+                phone: cleanP,
+                direction: 'OUTGOING',
+                status: 'sent',
+                text: autoReplyText,
+                senderName: 'Zest AutoBot',
+                isAutoReply: true,
+                timestamp: new Date(),
+                phoneId: incomingPhoneId,
+                wabaId: incomingWabaId
+              });
+
+              if (io) {
+                io.emit('auto_reply', autoReplyLog);
+                console.log(`🤖 [AUTOREPLY SENT & EMITTED] to ${cleanP}`);
+              }
+            } catch (botErr) {
+              console.error('❌ AutoReply Bot execution failed:', botErr.message);
+            }
+          }
+
         } catch (dbErr) {
           console.error('Failed to save incoming message or contact:', dbErr);
         }
@@ -242,7 +294,7 @@ router.post('/webhook', async (req, res) => {
         if (cleanStatusPhone.startsWith('91') && cleanStatusPhone.length === 12) cleanStatusPhone = cleanStatusPhone.slice(2);
 
         try {
-          await MessageLog.findOneAndUpdate(
+          const updatedStatusLog = await MessageLog.findOneAndUpdate(
             { wamid },
             { 
               $set: {
@@ -264,6 +316,12 @@ router.post('/webhook', async (req, res) => {
             },
             { upsert: true, new: true }
           );
+
+          // ⚡ WEBSOCKET REAL-TIME BROADCAST (Status Update)
+          const io = req.app.get('io');
+          if (io) {
+            io.emit('status_update', { wamid, status, phone: cleanStatusPhone, log: updatedStatusLog });
+          }
         } catch (dbErr) {
           console.error('Failed to save status to MessageLog:', dbErr);
         }

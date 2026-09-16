@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
 import { 
   MessageSquare, 
   Plus, 
@@ -296,6 +297,75 @@ export default function WhatsappMessage() {
       meta_template_id: t.metaTemplateId || t._id
     };
   };
+
+  const [wsConnected, setWsConnected] = useState(false);
+
+  // Real-time WebSockets connection for Instant AutoReply & Inbound Messages
+  useEffect(() => {
+    let socket;
+    try {
+      socket = io(getApiBase(), {
+        transports: ['websocket', 'polling']
+      });
+
+      socket.on('connect', () => {
+        console.log('⚡ Connected to WebSockets real-time server:', socket.id);
+        setWsConnected(true);
+      });
+
+      socket.on('disconnect', () => {
+        console.log('🔌 WebSockets disconnected');
+        setWsConnected(false);
+      });
+
+      socket.on('new_message', (msg) => {
+        console.log('📩 [WEBSOCKET INCOMING]', msg);
+        if (!msg?.phone) return;
+        const cleanPhone = String(msg.phone).replace(/\D/g, '').slice(-10);
+
+        setChatLogMap(prev => {
+          const existing = prev[cleanPhone] || [];
+          if (existing.some(m => m.wamid === msg.wamid)) return prev;
+          return { ...prev, [cleanPhone]: [...existing, msg] };
+        });
+
+        setUnreadMap(prev => ({
+          ...prev,
+          [cleanPhone]: (prev[cleanPhone] || 0) + 1
+        }));
+      });
+
+      socket.on('auto_reply', (replyMsg) => {
+        console.log('🤖 [WEBSOCKET AUTOREPLY]', replyMsg);
+        if (!replyMsg?.phone) return;
+        const cleanPhone = String(replyMsg.phone).replace(/\D/g, '').slice(-10);
+
+        setChatLogMap(prev => {
+          const existing = prev[cleanPhone] || [];
+          if (existing.some(m => m.wamid === replyMsg.wamid)) return prev;
+          return { ...prev, [cleanPhone]: [...existing, replyMsg] };
+        });
+      });
+
+      socket.on('status_update', ({ wamid, status, phone, log }) => {
+        console.log(`📊 [WEBSOCKET STATUS] ${phone}: ${status}`);
+        if (!phone) return;
+        const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
+
+        setChatLogMap(prev => {
+          const existing = prev[cleanPhone] || [];
+          const updated = existing.map(m => m.wamid === wamid ? { ...m, status } : m);
+          return { ...prev, [cleanPhone]: updated };
+        });
+      });
+    } catch (e) {
+      console.error('Failed to initialize Socket.io client:', e);
+    }
+
+    return () => {
+      if (socket) socket.disconnect();
+    };
+  }, []);
 
   // Initial mount useEffect to load templates & prevent infinite loading
   useEffect(() => {
@@ -978,6 +1048,14 @@ export default function WhatsappMessage() {
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-black tracking-tight">WhatsApp Template & Action Builder</h1>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">Meta Cloud API</span>
+              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold border uppercase flex items-center gap-1.5 transition-all ${
+                wsConnected 
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                  : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                <span>{wsConnected ? 'WebSockets Live' : 'Connecting...'}</span>
+              </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5 max-w-xl">
               Create, sync, and send Meta WhatsApp Cloud API approved templates with interactive action buttons.

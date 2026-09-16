@@ -213,6 +213,7 @@ const sendMetaTemplate = async (phone, templateName, languageCode = 'en', compon
 module.exports = {
   getStatus,
   sendTextMessage,
+  sendWhatsAppMessage: sendTextMessage,
   sendImageMessage,
   sendButtons,
   sendPoll,

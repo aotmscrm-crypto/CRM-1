@@ -1,12 +1,38 @@
 require('dotenv').config();
 require('express-async-errors');
 const express  = require('express');
+const http     = require('http');
+const { Server } = require('socket.io');
 const cors     = require('cors');
 const mongoose = require('mongoose');
 const path     = require('path');
 const cron     = require('node-cron');
 
 const app = express();
+const server = http.createServer(app);
+
+// ── WebSockets (Socket.io) ────────────────────────────────────
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE']
+  }
+});
+
+app.set('io', io);
+
+io.on('connection', (socket) => {
+  console.log(`⚡ [WEBSOCKET] Client connected: ${socket.id}`);
+
+  socket.on('join_room', (room) => {
+    socket.join(room);
+    console.log(`📡 [WEBSOCKET] Client ${socket.id} joined room: ${room}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`🔌 [WEBSOCKET] Client disconnected: ${socket.id}`);
+  });
+});
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(cors({ origin: '*' }));
@@ -40,8 +66,6 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/mutton_ch
   .then(async () => {
     console.log('✅ MongoDB connected');
 
-    // WhatsApp initialization is no longer needed on startup because the Meta Cloud API is stateless.
-
     // Cron: run scheduled broadcasts every minute
     const { runScheduledTemplates } = require('./routes/template');
     cron.schedule('* * * * *', async () => {
@@ -53,6 +77,6 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/mutton_ch
   .catch(err => console.error('❌ MongoDB error:', err));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server running with WebSockets on port ${PORT}`));
 
-module.exports = app;
+module.exports = { app, server, io };
