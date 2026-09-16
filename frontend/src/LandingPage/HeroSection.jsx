@@ -1,5 +1,5 @@
 import React from 'react';
-import GradientWaves from './GradientWaves';
+import RobotHero from '../Components/ui/robot-hero';
 import { 
   IoFlashOutline, 
   IoPlayCircleOutline, 
@@ -12,85 +12,59 @@ import {
 export default function HeroSection() {
   return (
     <section className="relative w-full h-screen min-h-[750px] overflow-hidden bg-slate_dark">
-      {/* Full-Screen Interactive 3D WebGL Wave Background */}
+      {/* 3D Robot Background */}
       <div className="absolute inset-0 w-full h-full">
-        <GradientWaves
-          horizonColor="#5227FF"
-          waveColor="#FF9FFC"
-          crestColor="#FFFFFF"
-          speed={0.4}
-          amplitude={2.5}
-          waveScale={0.6}
-          waveRatio={0.9}
-          swell={35}
-          turbulence={20}
-          tilt={1.11}
-          zoom={1}
-          height={5.5}
-          fogDepth={15}
-          detail="medium"
-          brightness={1}
-          opacity={1}
-          mouseInteraction
-          parallaxStrength={0.5}
-          grain
-          grainIntensity={0.05}
+        <RobotHero 
+          backgroundText="CRM"
+          showNavbar={false}
+          color="#39a820ff"
+          pantallaColor="#5ccd1bff"
+          pantallaBrillo={2.0}
+          metalness={0.8}
+          scale={1.08}
         />
       </div>
 
-      {/* Atmospheric Vignette & Contrast Overlay */}
-      <div className="absolute inset-0 bg-slate_dark/45 backdrop-brightness-95 pointer-events-none" />
-      <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-slate_dark via-slate_dark/80 to-transparent pointer-events-none" />
+      {/* Atmospheric Vignette & Bottom Contrast Gradient Overlay */}
+      <div className="absolute inset-0 bg-slate_dark/20 backdrop-brightness-95 pointer-events-none" />
+      <div className="absolute bottom-0 left-0 right-0 h-44 bg-gradient-to-t from-slate_dark via-slate_dark/70 to-transparent pointer-events-none" />
 
-      {/* Middle Center Hero Content */}
-      <div className="absolute inset-0 flex items-center justify-center z-10 px-4 sm:px-6 lg:px-8 pointer-events-none pt-12">
-        <div className="max-w-4xl mx-auto text-center space-y-6">
+      {/* Hero Action Content Layer */}
+      <div className="absolute inset-0 flex flex-col justify-end z-20 px-4 sm:px-6 lg:px-8 pointer-events-none pb-12">
+        <div className="max-w-4xl mx-auto text-center space-y-6 w-full">
           
-          <br /><br />
-
-          {/* Main Headline */}
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.12] drop-shadow-lg">
-            The Modern WhatsApp CRM Built For{' '}
-            <span className="gradient-text-peach font-black">Fast-Growing Companies.</span>
-          </h1>
-
-          {/* Subtext */}
-          <p className="text-base sm:text-lg lg:text-xl text-slate-200 max-w-2xl mx-auto leading-relaxed font-normal drop-shadow-md">
-            Unify your company's customer conversations, automate sales pipelines, assign chats to multi-agent teams, and close deals faster directly on WhatsApp.
-          </p>
-
-          {/* Middle Center Clean & Neat Two Buttons */}
-          <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-4 pointer-events-auto">
+          {/* Action Buttons */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-5 pointer-events-auto">
             {/* Primary Action Button */}
             <a
               href="#demo"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-full font-semibold text-sm tracking-wide text-white bg-tech_orange hover:bg-tech_orange-600 shadow-2xl shadow-tech_orange/40 hover:shadow-tech_orange/60 hover:-translate-y-0.5 active:translate-y-0 border border-white/30 transition-all duration-200 group"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-9 py-4 rounded-full font-bold text-sm tracking-wide text-white bg-red-600 hover:bg-red-700 shadow-2xl shadow-red-600/40 hover:shadow-red-600/60 hover:-translate-y-1 active:translate-y-0 border border-white/30 transition-all duration-200 group"
             >
-              <IoFlashOutline className="text-base group-hover:scale-110 transition-transform" />
+              <IoFlashOutline className="text-lg group-hover:scale-110 transition-transform" />
               <span>Book a Demo</span>
-              <IoArrowForward className="text-xs group-hover:translate-x-0.5 transition-transform" />
+              <IoArrowForward className="text-xs group-hover:translate-x-1 transition-transform" />
             </a>
 
             {/* Secondary Action Button */}
             <a
               href="#simulator"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-full font-semibold text-sm tracking-wide text-white bg-slate_dark-300/70 hover:bg-slate_dark-300/95 backdrop-blur-xl border border-white/25 hover:border-white/50 shadow-2xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-9 py-4 rounded-full font-bold text-sm tracking-wide text-white bg-slate_dark-300/80 hover:bg-slate_dark-300 backdrop-blur-xl border border-white/25 hover:border-white/50 shadow-2xl hover:-translate-y-1 active:translate-y-0 transition-all duration-200"
             >
-              <IoPlayCircleOutline className="text-xl text-tech_orange" />
+              <IoPlayCircleOutline className="text-xl text-red-500" />
               <span>Explore Platform</span>
             </a>
           </div>
 
           {/* Micro Trust Indicators */}
-          <div className="pt-4 flex flex-wrap items-center justify-center gap-6 text-xs text-slate-300 font-mono">
-            <span className="flex items-center gap-1.5">
-              <IoCheckmarkCircleOutline className="text-tech_orange text-sm" /> 3.8x Deal Velocity
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-4 text-xs sm:text-sm text-slate-300 font-mono pointer-events-auto">
+            <span className="flex items-center gap-1.5 bg-slate_dark/60 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/10">
+              <IoCheckmarkCircleOutline className="text-red-500 text-base" /> 3.8x Deal Velocity
             </span>
-            <span className="flex items-center gap-1.5">
-              <IoPulseOutline className="text-emerald-400 text-sm" /> &lt; 45s Response SLA
+            <span className="flex items-center gap-1.5 bg-slate_dark/60 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/10">
+              <IoPulseOutline className="text-emerald-400 text-base" /> &lt; 45s Response SLA
             </span>
-            <span className="flex items-center gap-1.5">
-              <IoShieldCheckmarkOutline className="text-sky-400 text-sm" /> Zero-Ban Account Protection
+            <span className="flex items-center gap-1.5 bg-slate_dark/60 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/10">
+              <IoShieldCheckmarkOutline className="text-sky-400 text-base" /> Zero-Ban Account Protection
             </span>
           </div>
 

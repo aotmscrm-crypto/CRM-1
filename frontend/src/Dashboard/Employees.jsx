@@ -43,7 +43,7 @@ export default function Employees() {
     name: '',
     email: '',
     password: '',
-    companyName: 'AOTMS Enterprise',
+    companyName: 'Zest Eat',
     phone: '',
     role: 'employee',
     designation: 'WhatsApp Campaign Specialist',
@@ -162,7 +162,7 @@ export default function Employees() {
           name: '',
           email: '',
           password: '',
-          companyName: 'AOTMS Enterprise',
+          companyName: 'Zest Eat',
           phone: '',
           role: 'employee',
           designation: 'WhatsApp Campaign Specialist',
@@ -312,7 +312,7 @@ export default function Employees() {
                 name: '',
                 email: '',
                 password: '',
-                companyName: 'AOTMS Enterprise',
+                companyName: 'Zest Eat',
                 phone: '',
                 role: 'employee',
                 designation: 'WhatsApp Campaign Specialist',
@@ -634,7 +634,7 @@ export default function Employees() {
                   <input
                     type="text"
                     required
-                    placeholder="AOTMS Enterprise"
+                    placeholder="Zest Eat"
                     value={formData.companyName}
                     onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-900 text-xs placeholder-slate-400 focus:outline-none focus:border-sky-500"

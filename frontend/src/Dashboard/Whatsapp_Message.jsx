@@ -11,6 +11,7 @@ import {
   ExternalLink, 
   Phone, 
   Image as ImageIcon, 
+  ImageOff,
   FileText, 
   X, 
   Sparkles, 
@@ -94,7 +95,8 @@ export default function WhatsappMessage() {
   const [refreshing, setRefreshing] = useState(false);
   const [filterCategory, setFilterCategory] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  
+  const [brokenImages, setBrokenImages] = useState({});
+
   // View Mode: 'TEMPLATES' vs 'LIVE_CHAT' (WhatsApp Web dual-pane - Default to LIVE_CHAT)
   const [viewMode, setViewModeState] = useState(() => {
     return localStorage.getItem('wa_view_mode') || 'LIVE_CHAT';
@@ -257,6 +259,12 @@ export default function WhatsappMessage() {
     let headerType = t.header_type || (t.imageUrl ? 'IMAGE' : (headerComp ? (headerComp.format || 'NONE') : 'NONE'));
     let headerText = t.header_text || (headerComp?.format === 'TEXT' ? (headerComp.text || '') : '');
     let headerImageUrl = t.imageUrl || t.header_image_url || (headerComp?.example?.header_handle?.[0] || '');
+    if (headerImageUrl && typeof headerImageUrl === 'string' && headerImageUrl.startsWith('/uploads')) {
+      headerImageUrl = `${getApiBase()}${headerImageUrl}`;
+    }
+    if (headerImageUrl && typeof headerImageUrl === 'string' && headerImageUrl.startsWith('4::')) {
+      headerImageUrl = ''; // Internal Meta handle string, fallback to missing image state
+    }
     let headerContent = headerImageUrl || headerText || t.header_content || '';
     let bodyText = t.message || bodyComp?.text || t.body_text || t.title || 'Welcome to AOTMS!';
     let footerText = t.footer || footerComp?.text || t.footer_text || '';
@@ -1674,12 +1682,34 @@ export default function WhatsappMessage() {
 
                         {/* Preview box */}
                         <div className="p-3.5 rounded-xl bg-emerald-50/40 border border-emerald-100 space-y-2 text-xs">
-                          {tmpl.header_image_url && (
+                          {tmpl.header_image_url && !brokenImages[tmpl._id || tmpl.id] ? (
                             <div className="relative rounded-lg overflow-hidden border border-emerald-200/80 bg-slate-100 max-h-32">
-                              <img src={tmpl.header_image_url} alt="Header" className="w-full h-28 object-cover" />
+                              <img 
+                                src={tmpl.header_image_url} 
+                                alt="Header" 
+                                className="w-full h-28 object-cover" 
+                                onError={() => setBrokenImages(prev => ({ ...prev, [tmpl._id || tmpl.id]: true }))}
+                              />
                             </div>
-                          )}
-                          {tmpl.header_text && !tmpl.header_image_url && (
+                          ) : (tmpl.header_type === 'IMAGE' || (tmpl.category || '').toUpperCase() === 'UTILITY') ? (
+                            <div className="p-3 bg-amber-50/80 border border-amber-200/90 rounded-xl flex items-center justify-between text-amber-900 shadow-2xs">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <ImageOff className="w-4 h-4 text-amber-600 shrink-0" />
+                                <div className="min-w-0">
+                                  <div className="text-[11px] font-bold text-amber-900 truncate">Image Not Showing</div>
+                                  <div className="text-[9px] text-amber-600 font-medium truncate">Click to attach/update image</div>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleEditTemplate(tmpl)}
+                                className="px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold shadow-2xs transition-colors shrink-0 cursor-pointer"
+                              >
+                                Update Utility
+                              </button>
+                            </div>
+                          ) : null}
+                          {tmpl.header_text && !tmpl.header_image_url && tmpl.header_type !== 'IMAGE' && (
                             <div className="font-extrabold text-slate-900 border-b border-emerald-200/60 pb-1">
                               {tmpl.header_text}
                             </div>

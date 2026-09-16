@@ -2,32 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   IoChevronDown, 
-  IoMenuOutline, 
-  IoCloseOutline,
   IoArrowForward,
-  IoChatbubblesOutline,
-  IoGitNetworkOutline,
-  IoShieldCheckmarkOutline,
-  IoStatsChartOutline,
   IoLogOutOutline,
-  IoPersonCircleOutline,
   IoSpeedometerOutline,
-  IoPeopleOutline,
-  IoSparklesOutline,
-  IoBusinessOutline,
-  IoRocketOutline,
-  IoCardOutline,
-  IoCallOutline,
-  IoCheckmarkCircleOutline
+  IoBusinessOutline
 } from 'react-icons/io5';
 
 export default function Navbar() {
   const [isScrolled, setIsScrolled] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [activeDropdown, setActiveDropdown] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
-  const dropdownTimeoutRef = useRef(null);
   const profileDropdownRef = useRef(null);
   const navigate = useNavigate();
 
@@ -83,155 +67,31 @@ export default function Navbar() {
     window.dispatchEvent(new Event('auth-change'));
   };
 
-  const handleMouseEnter = (menu) => {
-    if (dropdownTimeoutRef.current) clearTimeout(dropdownTimeoutRef.current);
-    setActiveDropdown(menu);
-  };
-
-  const handleMouseLeave = () => {
-    dropdownTimeoutRef.current = setTimeout(() => {
-      setActiveDropdown(null);
-    }, 150);
-  };
-
-  const navLinks = [
-    { name: 'Features', href: '#features' },
-    { 
-      name: 'Solutions', 
-      href: '#solutions',
-      hasDropdown: true,
-      items: [
-        { 
-          title: 'Meta WhatsApp Blast', 
-          desc: 'High-speed broadcast campaigns with official Meta Cloud API templates.',
-          icon: <IoRocketOutline className="text-amber-400 text-lg" />,
-          href: '#features'
-        },
-        { 
-          title: 'Multi-Agent Team Inbox', 
-          desc: 'Shared team workspace for support agents, managers, and sales leads.',
-          icon: <IoShieldCheckmarkOutline className="text-emerald-400 text-lg" />,
-          href: '#about'
-        },
-        { 
-          title: 'Lead Pipeline & Daily Calls', 
-          desc: 'Track daily 1st, 2nd, and final calling notes with employee conversion rates.',
-          icon: <IoStatsChartOutline className="text-sky-400 text-lg" />,
-          href: '#workflow'
-        },
-        { 
-          title: 'Pay_SIP Reminders', 
-          desc: 'Automated monthly mutual fund installment alerts directly on WhatsApp.',
-          icon: <IoCardOutline className="text-teal-400 text-lg" />,
-          href: '#pricing'
-        }
-      ]
-    },
-    { name: 'WhatsApp Blast', href: '#whatsapp-blast' },
-    { name: 'Integrations', href: '#integrations' },
-    { name: 'Pricing', href: '#pricing' },
-    { name: 'Support', href: '#support' }
-  ];
-
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 transition-all duration-300">
+    <header className="fixed top-0 left-0 right-0 z-50 transition-all duration-300 pointer-events-none">
       
-      {/* Top Bright Gradient Accent Line Bar */}
-      <div className="h-[3.5px] w-full bg-gradient-to-r from-amber-500 via-emerald-400 via-teal-400 to-amber-500 shadow-sm" />
-
-      {/* Main Glassmorphic Navigation Bar */}
+      {/* Transparent Navigation Bar */}
       <div 
-        className={`w-full transition-all duration-200 ${
-          isScrolled 
-            ? 'bg-gradient-to-r from-slate-950/95 via-slate-900/95 to-slate-950/95 backdrop-blur-2xl border-b border-emerald-500/20 shadow-[0_10px_35px_-10px_rgba(16,185,129,0.25)] py-3' 
-            : 'bg-gradient-to-r from-slate-950/90 via-slate-900/90 to-slate-950/90 backdrop-blur-xl border-b border-white/10 py-4'
+        className={`w-full transition-all duration-200 py-4 ${
+          isScrolled ? 'bg-slate-950/40 backdrop-blur-md' : 'bg-transparent'
         }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between pointer-events-auto">
             
             {/* Brand Logo & Production Identity Badge */}
             <a href="#" className="flex items-center gap-3 group py-1">
               <div className="relative">
                 <img 
                   src="/logo.png" 
-                  alt="AOTMS Enterprise WhatsApp CRM" 
+                  alt="Zest Eat WhatsApp CRM" 
                   className="h-10 sm:h-12 w-auto object-contain drop-shadow-[0_0_12px_rgba(16,185,129,0.4)] transition-transform duration-200 group-hover:scale-105" 
                 />
               </div>
             </a>
 
-            {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center space-x-1.5">
-              {navLinks.map((link) => {
-                if (link.hasDropdown) {
-                  return (
-                    <div 
-                      key={link.name} 
-                      className="relative"
-                      onMouseEnter={() => handleMouseEnter('solutions')}
-                      onMouseLeave={handleMouseLeave}
-                    >
-                      <button
-                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-150 cursor-pointer ${
-                          activeDropdown === 'solutions' 
-                            ? 'text-white bg-emerald-500/20 border border-emerald-500/40 shadow-sm' 
-                            : 'text-slate-200 hover:text-white hover:bg-white/10'
-                        }`}
-                      >
-                        <span>{link.name}</span>
-                        <IoChevronDown 
-                          className={`text-sm text-emerald-400 transition-transform duration-200 ${
-                            activeDropdown === 'solutions' ? 'rotate-180 text-amber-400' : ''
-                          }`} 
-                        />
-                      </button>
-
-                      {/* Solutions Dropdown Menu */}
-                      {activeDropdown === 'solutions' && (
-                        <div className="absolute top-full left-0 w-88 mt-2 p-3 rounded-2xl bg-slate-900/95 backdrop-blur-2xl border border-emerald-500/30 shadow-2xl shadow-emerald-950/50 animate-in fade-in slide-in-from-top-2 duration-150 z-50">
-                          <div className="grid grid-cols-1 gap-1.5">
-                            {link.items.map((item, idx) => (
-                              <a
-                                key={idx}
-                                href={item.href}
-                                onClick={() => setActiveDropdown(null)}
-                                className="p-3 rounded-xl hover:bg-slate-800/80 flex items-start gap-3 transition-all group border border-transparent hover:border-emerald-500/30"
-                              >
-                                <div className="p-2.5 rounded-xl bg-slate-800/90 border border-emerald-500/20 group-hover:border-emerald-400/50 transition-colors shrink-0">
-                                  {item.icon}
-                                </div>
-                                <div>
-                                  <div className="text-sm font-bold text-white group-hover:text-emerald-400 transition-colors">
-                                    {item.title}
-                                  </div>
-                                  <div className="text-xs text-slate-300 leading-normal mt-0.5">
-                                    {item.desc}
-                                  </div>
-                                </div>
-                              </a>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-
-                return (
-                  <a
-                    key={link.name}
-                    href={link.href}
-                    className="px-4 py-2 rounded-xl text-sm font-bold text-slate-200 hover:text-white hover:bg-white/10 transition-colors duration-150"
-                  >
-                    {link.name}
-                  </a>
-                );
-              })}
-            </nav>
-
             {/* Right Desktop Actions: User Profile Dropdown or Login/Signup */}
-            <div className="hidden lg:flex items-center gap-3">
+            <div className="flex items-center gap-3">
               {currentUser ? (
                 <div className="relative" ref={profileDropdownRef}>
                   
@@ -255,7 +115,7 @@ export default function Navbar() {
                         {currentUser.name}
                       </div>
                       <div className="text-[10px] text-slate-300 font-mono truncate max-w-[110px]">
-                        {currentUser.company_name || 'AOTMS Enterprise'}
+                        {currentUser.company_name || 'Zest Eat'}
                       </div>
                     </div>
 
@@ -278,7 +138,7 @@ export default function Navbar() {
                           <div className="text-xs text-slate-300 truncate font-mono">{currentUser.email}</div>
                           <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
                             <IoBusinessOutline className="w-3 h-3" />
-                            <span className="truncate max-w-[140px]">{currentUser.company_name || 'AOTMS Enterprise'}</span>
+                            <span className="truncate max-w-[140px]">{currentUser.company_name || 'Zest Eat'}</span>
                           </div>
                         </div>
                       </div>
@@ -331,97 +191,7 @@ export default function Navbar() {
               )}
             </div>
 
-            {/* Mobile Hamburger Button */}
-            <div className="lg:hidden flex items-center">
-              <button
-                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="p-2 rounded-xl bg-slate-900 border border-emerald-500/30 text-white hover:text-emerald-400 transition-colors cursor-pointer"
-                aria-label="Toggle navigation"
-              >
-                {mobileMenuOpen ? (
-                  <IoCloseOutline className="text-2xl" />
-                ) : (
-                  <IoMenuOutline className="text-2xl" />
-                )}
-              </button>
-            </div>
-
           </div>
-
-          {/* Mobile Drawer Menu */}
-          {mobileMenuOpen && (
-            <div className="lg:hidden mt-3 p-4 rounded-2xl bg-slate-900/98 backdrop-blur-2xl border border-emerald-500/30 shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2 duration-150">
-              <div className="flex flex-col space-y-1">
-                {navLinks.map((link) => (
-                  <a
-                    key={link.name}
-                    href={link.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="px-3 py-2 rounded-xl text-xs font-bold text-slate-100 hover:text-emerald-400 hover:bg-white/10 transition-colors"
-                  >
-                    {link.name}
-                  </a>
-                ))}
-              </div>
-
-              <div className="pt-3 border-t border-white/10 flex flex-col gap-2">
-                {currentUser ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-slate-800 border border-white/10">
-                      <div className="w-8 h-8 rounded-full p-[2px] bg-gradient-to-tr from-amber-400 via-emerald-400 to-teal-400">
-                        <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-xs font-bold text-white">
-                          {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-extrabold text-white">{currentUser.name}</div>
-                        <div className="text-[10px] text-emerald-400 font-mono">{currentUser.company_name || 'AOTMS Enterprise'}</div>
-                      </div>
-                    </div>
-
-                    <Link
-                      to="/dashboard"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md shadow-amber-500/20"
-                    >
-                      <IoSpeedometerOutline className="text-base" />
-                      <span>Open CRM Studio</span>
-                    </Link>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleLogout();
-                        setMobileMenuOpen(false);
-                      }}
-                      className="w-full py-2 rounded-xl text-center text-xs font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition-colors"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <Link
-                      to="/login"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="w-full py-2 rounded-xl text-center text-xs font-bold text-slate-200 hover:text-emerald-400 hover:bg-white/5 transition-colors"
-                    >
-                      Sign In
-                    </Link>
-                    <Link
-                      to="/signup"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="w-full py-2.5 rounded-xl text-center text-xs font-black text-white bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-500 flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20"
-                    >
-                      <span>🚀 Get Started Free</span>
-                      <IoArrowForward className="text-xs" />
-                    </Link>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
         </div>
       </div>
     </header>

@@ -223,6 +223,52 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// PUT /api/template/:id
+// Update an existing template (Utility/Marketing) with image/text/components
+router.put('/:id', upload.single('media'), async (req, res) => {
+  try {
+    const templateId = req.params.id;
+    let template = await Template.findOne({
+      $or: [{ _id: templateId.match(/^[0-9a-fA-F]{24}$/) ? templateId : null }, { metaTemplateId: templateId }]
+    });
+
+    if (!template) {
+      return res.status(404).json({ success: false, message: 'Template not found' });
+    }
+
+    let { name, language, category, components, header_image_url, message, body_text, footer_text, header_text } = req.body;
+    if (typeof components === 'string') {
+      try { components = JSON.parse(components); } catch (e) {}
+    }
+
+    if (name) template.name = name;
+    if (category) template.category = category;
+    if (language) template.language = language;
+    if (message || body_text) template.message = body_text || message;
+    if (footer_text) template.footer = footer_text;
+    if (Array.isArray(components)) template.components = components;
+
+    if (req.file) {
+      let cloudinaryUrl = null;
+      try {
+        cloudinaryUrl = await uploadToCloudinary(req.file.path, 'zest_eat_templates');
+      } catch (err) {
+        console.error('Cloudinary template upload failed:', err.message);
+      }
+      template.imageUrl = cloudinaryUrl || `/uploads/campaigns/${req.file.filename}`;
+    } else if (header_image_url) {
+      template.imageUrl = header_image_url;
+    }
+
+    await template.save();
+    res.json({ success: true, template, message: 'Template updated successfully' });
+  } catch (err) {
+    console.error('Update template error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
 router.get('/', async (req, res) => {
   const creds = await getMetaCredentials();
   const currentWaba = creds.wabaId;

@@ -363,85 +363,23 @@ export default function DashboardPage() {
     setTimeout(() => setRefreshing(false), 600);
   };
 
-  // Sample organizational users stored in Neon PostgreSQL
-  const teamUsers = [
+  const teamUsers = currentUser ? [
     {
-      id: 'usr_001',
-      name: currentUser?.name || 'Administrator',
-      email: currentUser?.email || 'admin@aotms.com',
-      phone: currentUser?.phone || '+91 98765 43210',
-      company: currentUser?.company_name || 'AOTMS Enterprise',
-      role: 'Enterprise Admin',
+      id: currentUser.id || 'usr_current',
+      name: currentUser.name || 'Administrator',
+      email: currentUser.email || '',
+      phone: currentUser.phone || '',
+      company: currentUser.company_name || 'Zest Eat',
+      role: currentUser.role || 'Enterprise Admin',
       status: 'Active',
-      leadsHandled: 420,
-      conversionRate: '88.4%',
-      activeDeals: '₹34.5L',
-      joined: 'September 2024',
-      bio: 'Executive administrator overseeing company automation pipelines, WhatsApp gateways, and user credentials.',
-      recentActivities: [
-        'Activated automated 100K WhatsApp broadcast campaign',
-        'Provisioned Neon PostgreSQL database migration pool',
-        'Authorized Pay_SIP recurring collection batch'
-      ]
-    },
-    {
-      id: 'usr_002',
-      name: 'Vikram Sharma',
-      email: 'vikram@techmasters.com',
-      phone: '+91 98450 11223',
-      company: 'AOTMS Enterprise Solutions',
-      role: 'CRM Manager',
-      status: 'Active',
-      leadsHandled: 312,
-      conversionRate: '79.2%',
-      activeDeals: '₹22.1L',
-      joined: 'January 2025',
-      bio: 'Lead operations strategist coordinating sales agents and WhatsApp inbound workflows.',
-      recentActivities: [
-        'Qualified 14 enterprise leads from Bangalore seminar',
-        'Adjusted AI voice prompt sensitivity for corporate calls',
-        'Reviewed quarterly sales quotas and conversion rates'
-      ]
-    },
-    {
-      id: 'usr_003',
-      name: 'Ananya Rao',
-      email: 'ananya@techmasters.com',
-      phone: '+91 98765 43210',
-      company: 'AOTMS AI & Automation Labs',
-      role: 'Senior Sales Lead',
-      status: 'Active',
-      leadsHandled: 285,
-      conversionRate: '84.6%',
-      activeDeals: '₹18.8L',
-      joined: 'March 2025',
-      bio: 'Specialist in student enrollment, Masterclass consultations, and Pay_SIP subscriptions.',
-      recentActivities: [
-        'Enrolled 8 students into Advanced AI Masterclass',
-        'Generated ₹1,20,000 in recurring SIP UPI mandates',
-        'Followed up with 25 WhatsApp inbound inquiries'
-      ]
-    },
-    {
-      id: 'usr_004',
-      name: 'Rohan Deshmukh',
-      email: 'rohan@aotms.com',
-      phone: '+91 97665 44332',
-      company: 'AOTMS Cloud Technologies',
-      role: 'AI Calling Specialist',
-      status: 'In Call',
-      leadsHandled: 540,
-      conversionRate: '72.1%',
-      activeDeals: '₹14.2L',
-      joined: 'June 2025',
-      bio: 'Telephony engineer managing autonomous voice bots, call sentiment analysis, and queue routing.',
-      recentActivities: [
-        'Ran 400-call AI voice batch with 98% sentiment accuracy',
-        'Resolved telephony gateway latency on Airtel trunk',
-        'Exported demo confirmation recordings to CRM leads'
-      ]
+      leadsHandled: 0,
+      conversionRate: '0%',
+      activeDeals: '₹0',
+      joined: 'Active Session',
+      bio: 'Workspace Administrator Account',
+      recentActivities: ['LoggedIn to CRM Studio']
     }
-  ];
+  ] : [];
 
   const filteredUsers = teamUsers.filter(u => 
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
