@@ -179,8 +179,8 @@ export default function WhatsappMessage() {
     body_text: 'Welcome to AOTMS Enterprise Solutions. Claim your exclusive discount on all WhatsApp automation tools.',
     footer_text: 'AOTMS',
     buttons: [
-      { type: 'PHONE_NUMBER', text: 'Call Support', phone_number: '+918019942233', url: '', contact_name: '' },
-      { type: 'URL', text: 'Visit Website', phone_number: '', url: 'https://www.academyoftechmasters.com/', contact_name: '' }
+      { type: 'PHONE_NUMBER', text: 'Call Support', phone_number: '+91 8566856789', url: '', contact_name: '' },
+      { type: 'URL', text: 'Visit Website', phone_number: '', url: 'https://www.zesteat.in/', contact_name: '' }
     ]
   });
 
@@ -197,8 +197,8 @@ export default function WhatsappMessage() {
       body_text: 'Welcome to AOTMS Enterprise Solutions. Claim your exclusive discount on all WhatsApp automation tools.',
       footer_text: 'AOTMS',
       buttons: [
-        { type: 'PHONE_NUMBER', text: 'Call Support', phone_number: '+918019942233', url: '', contact_name: '' },
-        { type: 'URL', text: 'Visit Website', phone_number: '', url: 'https://www.academyoftechmasters.com/', contact_name: '' }
+        { type: 'PHONE_NUMBER', text: 'Call Support', phone_number: '+918566856789', url: '', contact_name: '' },
+        { type: 'URL', text: 'Visit Website', phone_number: '', url: 'https://www.zesteat.in/', contact_name: '' }
       ]
     });
     setShowCreateModal(true);

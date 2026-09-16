@@ -92,13 +92,13 @@ const sanitizeComponentsForMeta = (components) => {
       const sanitizedButtons = c.buttons.slice(0, 3).map(b => {
         const btnText = (b.text || 'Button').trim().slice(0, 25);
         if (b.type === 'PHONE_NUMBER') {
-          let phone = String(b.phone_number || '+918019942233').replace(/[^\d+]/g, '');
+          let phone = String(b.phone_number || '+918566856789').replace(/[^\d+]/g, '');
           if (!phone.startsWith('+')) phone = '+' + phone;
-          if (phone.length < 5) phone = '+918019942233';
+          if (phone.length < 5) phone = '+918566856789';
           return { type: 'PHONE_NUMBER', text: btnText, phone_number: phone };
         }
         if (b.type === 'URL') {
-          let url = (b.url || 'https://aotms.com').trim();
+          let url = (b.url || 'https://www.zesteat.in/').trim();
           if (!url.startsWith('http')) url = 'https://' + url;
           return { type: 'URL', text: btnText, url };
         }
