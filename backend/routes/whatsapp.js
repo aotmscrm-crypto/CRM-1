@@ -210,49 +210,22 @@ router.post('/webhook', async (req, res) => {
             console.log(`⚡ [WEBSOCKET] Emitted 'new_message' for ${cleanP}`);
           }
 
-          // 🤖 AUTOMATION AUTOREPLY BOT ENGINE
-          const lowerText = (text || '').toLowerCase().trim();
-          let autoReplyText = '';
-
-          if (['hi', 'hello', 'hey', 'namaste', 'start'].some(k => lowerText.includes(k))) {
-            autoReplyText = `Hello ${senderName}! 👋\nWelcome to Zest Eat Enterprise Solutions.\n\nHow can we help you today?\n1️⃣ Type *MENU* to view catalog\n2️⃣ Type *SUPPORT* for customer care\n3️⃣ Type *PAYMENT* for billing info`;
-          } else if (lowerText.includes('menu') || lowerText.includes('price') || lowerText.includes('catalog')) {
-            autoReplyText = `🍽️ Check out our official catalog & order link:\nhttps://www.zesteat.in/\n\nNeed help with custom packages? Reply *SUPPORT*!`;
-          } else if (lowerText.includes('support') || lowerText.includes('help') || lowerText.includes('call')) {
-            autoReplyText = `📞 Customer Support Desk:\nCall/WhatsApp: +91 8566856789\nWebsite: https://www.zesteat.in/`;
-          } else if (lowerText.includes('pay') || lowerText.includes('billing') || lowerText.includes('upi')) {
-            autoReplyText = `💳 Secure Payment & Invoice Portal:\nVisit: https://www.zesteat.in/\nOr contact our finance team at +91 8566856789.`;
-          } else {
-            // General catch-all AutoReply for any other incoming message
-            autoReplyText = `Hello ${senderName}! 👋 Thank you for messaging Zest Eat.\nWe received your message: "${text}".\nOur team will assist you shortly, or visit https://www.zesteat.in/ for instant services.`;
-          }
-
-          if (autoReplyText) {
-            try {
-              const { sendTextMessage } = require('../utils/whatsappService');
-              const sendResult = await sendTextMessage(cleanP, autoReplyText);
-              const replyWamid = sendResult?.messages?.[0]?.id || `reply_${Date.now()}`;
-              
-              const autoReplyLog = await MessageLog.create({
-                wamid: replyWamid,
-                phone: cleanP,
-                direction: 'OUTGOING',
-                status: 'sent',
-                text: autoReplyText,
-                senderName: 'Zest AutoBot',
-                isAutoReply: true,
-                timestamp: new Date(),
-                phoneId: incomingPhoneId,
-                wabaId: incomingWabaId
-              });
-
-              if (io) {
-                io.emit('auto_reply', autoReplyLog);
-                console.log(`🤖 [AUTOREPLY SENT & EMITTED] to ${cleanP}`);
-              }
-            } catch (botErr) {
-              console.error('❌ AutoReply Bot execution failed:', botErr.message);
-            }
+          // 🤖 AUTOMATION AUTOREPLY BOT ENGINE (ZestEat Templates Chart Flow)
+          const buttonOrListPayload = msgObj.button?.payload || msgObj.button?.text || msgObj.interactive?.button_reply?.id || msgObj.interactive?.list_reply?.id || msgObj.interactive?.button_reply?.title || msgObj.interactive?.list_reply?.title || '';
+          
+          try {
+            const { handleZestEatAutomation } = require('../utils/zestEatAutomationBot');
+            await handleZestEatAutomation({
+              phone: cleanP,
+              text,
+              payload: buttonOrListPayload,
+              senderName,
+              incomingPhoneId,
+              incomingWabaId,
+              io
+            });
+          } catch (botErr) {
+            console.error('❌ ZestEat Automation Bot execution failed:', botErr.message);
           }
 
         } catch (dbErr) {
