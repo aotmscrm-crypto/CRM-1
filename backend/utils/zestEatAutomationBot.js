@@ -6,7 +6,8 @@ const userSessions = new Map();
 
 /**
  * ZestEat WhatsApp Automation Bot Handler
- * Exactly implements ZestEat_WhatsApp_Automated_Templates_Chart flow
+ * Exactly implements ZestEat_WhatsApp_Automated_Templates_Chart flow, Custom Feedback Capture,
+ * and Stop Conversation Automation.
  */
 const handleZestEatAutomation = async ({ phone, text, payload, senderName, incomingPhoneId, incomingWabaId, io }) => {
   const cleanP = String(phone).replace(/\D/g, '');
@@ -19,10 +20,38 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
   let responseSentText = '';
   let sentMessageResult = null;
 
-  // ── ROUTING LOGIC ─────────────────────────────────────────────────────────
+  // ── 0. STOP CONVERSATION TRIGGER & SUPPRESSION ─────────────────────────────
+  if (['stop', 'btn_stop_bot', 'stop conversation', 'exit', 'unsubscribe', 'stop bot'].includes(rawInput)) {
+    session.state = 'STOPPED';
+    userSessions.set(cleanP, session);
 
-  // 1. Reset / Main Menu trigger
-  if (['main_menu', 'btn_main_menu', 'hi', 'hello', 'start', 'menu', 'reset'].some(k => rawInput === k)) {
+    responseSentText = `🛑 *ZestEat Conversation Stopped*\n\n` +
+      `You have successfully stopped the automated bot conversation. We will no longer send automated bot responses to this chat.\n\n` +
+      `To restart the conversation anytime, simply reply *START* or *MENU*.`;
+
+    try {
+      sentMessageResult = await sendButtons(
+        cleanP,
+        responseSentText,
+        [
+          { buttonId: 'btn_main_menu', buttonText: { displayText: '▶️ Start Bot' } }
+        ],
+        'ZestEat Conversation Stopped',
+        'Reply START to re-enable automated responses'
+      );
+    } catch (err) {
+      sentMessageResult = await sendTextMessage(cleanP, responseSentText + `\n\n_Reply *START* or *MENU* to restart._`);
+    }
+  }
+
+  // If session is STOPPED and user hasn't explicitly restarted, ignore automated responses
+  else if (session.state === 'STOPPED' && !['main_menu', 'btn_main_menu', 'hi', 'hello', 'start', 'menu', 'reset'].includes(rawInput)) {
+    console.log(`🛑 [ZESTEAT BOT] Automated responses suppressed for ${cleanP} (Session STOPPED)`);
+    return;
+  }
+
+  // ── 1. RESET / MAIN MENU TRIGGER ──────────────────────────────────────────
+  else if (['main_menu', 'btn_main_menu', 'hi', 'hello', 'start', 'menu', 'reset'].some(k => rawInput === k)) {
     session.state = 'MAIN';
     userSessions.set(cleanP, session);
 
@@ -34,21 +63,21 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
         responseSentText,
         [
           { buttonId: 'btn_order', buttonText: { displayText: '📦 Order' } },
-          { buttonId: 'btn_feedback', buttonText: { displayText: '⭐ Feedback' } }
+          { buttonId: 'btn_feedback', buttonText: { displayText: '⭐ Feedback' } },
+          { buttonId: 'btn_stop_bot', buttonText: { displayText: '🛑 Stop Bot' } }
         ],
         'ZestEat Main Menu',
-        'Select Order or Feedback to proceed'
+        'Select Order, Feedback, or Stop Conversation'
       );
     } catch (err) {
-      console.warn('Interactive button fallback to text for Main Menu:', err.message);
       sentMessageResult = await sendTextMessage(
         cleanP,
-        `*ZestEat Main Menu*\n\n${responseSentText}\n\n1️⃣ *Order* (Reply 1)\n2️⃣ *Feedback* (Reply 2)`
+        `*ZestEat Main Menu*\n\n${responseSentText}\n\n1️⃣ *Order*\n2️⃣ *Feedback*\n3️⃣ *Stop Conversation* (Reply STOP)`
       );
     }
   }
 
-  // 2. Main Option Selection: ORDER
+  // ── 2. MAIN OPTION SELECTION: ORDER ───────────────────────────────────────
   else if (rawInput === 'btn_order' || rawInput === 'order' || (session.state === 'MAIN' && (rawInput === '1' || rawInput === '1. order'))) {
     session.state = 'ORDER_MENU';
     userSessions.set(cleanP, session);
@@ -70,12 +99,12 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
     } catch (err) {
       sentMessageResult = await sendTextMessage(
         cleanP,
-        `*ZestEat Order Categories*\n\n${responseSentText}\n\n1️⃣ *Food*\n2️⃣ *Meat*\n3️⃣ *ZestEat Market*\n\n_Reply 1, 2, or 3_`
+        `*ZestEat Order Categories*\n\n${responseSentText}\n\n1️⃣ *Food*\n2️⃣ *Meat*\n3️⃣ *ZestEat Market*\n\n_Reply 1, 2, or 3 (or reply STOP to end conversation)_`
       );
     }
   }
 
-  // 3. Sub-Category: MEAT MENU (Chicken, Mutton, Fish, Seafood)
+  // ── 3. SUB-CATEGORY: MEAT MENU ────────────────────────────────────────────
   else if (rawInput === 'btn_meat' || rawInput === 'meat' || (session.state === 'ORDER_MENU' && (rawInput === '2' || rawInput === '2. meat'))) {
     session.state = 'MEAT_MENU';
     userSessions.set(cleanP, session);
@@ -87,7 +116,7 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
         title: 'ZestEat Meat Categories 🥩',
         description: 'Choose your preferred meat product below:',
         buttonText: 'Select Meat Item',
-        footer: 'ZestEat Fresh Meat Quality Guaranteed',
+        footer: 'Reply STOP anytime to stop automated bot',
         sections: [
           {
             title: 'Meat Subcategories',
@@ -95,7 +124,8 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
               { rowId: 'btn_meat_chicken', title: '🍗 Chicken', description: 'Fresh farm-raised chicken' },
               { rowId: 'btn_meat_mutton', title: '🍖 Mutton', description: 'Tender goat & lamb mutton' },
               { rowId: 'btn_meat_fish', title: '🐟 Fish', description: 'Fresh river & sea fish' },
-              { rowId: 'btn_meat_seafood', title: '🦐 Other Seafood', description: 'Prawns, crabs & seafood' }
+              { rowId: 'btn_meat_seafood', title: '🦐 Other Seafood', description: 'Prawns, crabs & seafood' },
+              { rowId: 'btn_stop_bot', title: '🛑 Stop Conversation', description: 'Stop automated bot responses' }
             ]
           }
         ]
@@ -103,12 +133,12 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
     } catch (err) {
       sentMessageResult = await sendTextMessage(
         cleanP,
-        `🥩 *ZestEat Meat Selection*\n\n1️⃣ *Chicken*\n2️⃣ *Mutton*\n3️⃣ *Fish*\n4️⃣ *Other Seafood*\n\n_Reply 1, 2, 3, or 4_`
+        `🥩 *ZestEat Meat Selection*\n\n1️⃣ *Chicken*\n2️⃣ *Mutton*\n3️⃣ *Fish*\n4️⃣ *Other Seafood*\n5️⃣ *Stop Conversation*\n\n_Reply 1-5_`
       );
     }
   }
 
-  // 4. Sub-Category: FOOD, ZESTEAT MARKET, or specific MEAT items (Chicken / Mutton / Fish / Seafood)
+  // ── 4. ORDER ASSISTANCE FAQ (Food / ZestEat Market / Meat items) ─────────
   else if (
     rawInput === 'btn_food' || rawInput === 'food' || (session.state === 'ORDER_MENU' && rawInput === '1') ||
     rawInput === 'btn_zesteat_market' || rawInput === 'zesteat market' || rawInput === 'market' || (session.state === 'ORDER_MENU' && rawInput === '3') ||
@@ -145,35 +175,32 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
         responseSentText,
         [
           { buttonId: 'btn_live_chat', buttonText: { displayText: '💬 Live Chat' } },
-          { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } }
+          { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } },
+          { buttonId: 'btn_stop_bot', buttonText: { displayText: '🛑 Stop Bot' } }
         ],
         `ZestEat ${selectedName} Assistance`,
-        'Need more help? Click Live Chat or Main Menu'
+        'Click Live Chat, Main Menu, or Stop Conversation'
       );
     } catch (err) {
       sentMessageResult = await sendTextMessage(
         cleanP,
-        responseSentText + `\n\n_Reply *LIVE CHAT* for support or *MENU* for main menu._`
+        responseSentText + `\n\n_Reply LIVE CHAT for support, MENU for main menu, or STOP to end conversation._`
       );
     }
   }
 
-  // 5. Main Option Selection: FEEDBACK
+  // ── 5. MAIN OPTION SELECTION: FEEDBACK PROMPT ──────────────────────────────
   else if (rawInput === 'btn_feedback' || rawInput === 'feedback' || (session.state === 'MAIN' && (rawInput === '2' || rawInput === '2. feedback'))) {
-    session.state = 'FEEDBACK_VIEW';
+    session.state = 'AWAITING_FEEDBACK_TEXT';
     userSessions.set(cleanP, session);
 
-    responseSentText = `⭐ *ZestEat Order & Feedback Assistance*\n\n` +
-      `1️⃣ *How was your ZestEat order?*\n` +
-      `👉 Please share your experience with us.\n\n` +
-      `2️⃣ *How would you rate your food?*\n` +
-      `👉 Your feedback helps us improve our food quality.\n\n` +
-      `3️⃣ *How would you rate your delivery experience?*\n` +
-      `👉 Please share your delivery experience with us.\n\n` +
-      `4️⃣ *Do you have any feedback or suggestions?*\n` +
-      `👉 We value your feedback and suggestions.\n\n` +
-      `5️⃣ *Live chat*\n` +
-      `👉 Connect with our support team for assistance.`;
+    responseSentText = `⭐ *ZestEat Feedback & Rating*\n\n` +
+      `Hello ${userName}! 👋 Thank you for choosing *ZestEat*.\n\n` +
+      `We would love to hear about your experience! Please share your thoughts with us:\n\n` +
+      `1️⃣ How was your order & food quality?\n` +
+      `2️⃣ How was your delivery experience?\n` +
+      `3️⃣ Do you have any feedback or suggestions for us?\n\n` +
+      `✍️ *Please write and type your feedback message below and press Send:*`;
 
     try {
       sentMessageResult = await sendButtons(
@@ -181,21 +208,54 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
         responseSentText,
         [
           { buttonId: 'btn_live_chat', buttonText: { displayText: '💬 Live Chat' } },
-          { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } }
+          { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } },
+          { buttonId: 'btn_stop_bot', buttonText: { displayText: '🛑 Stop Bot' } }
         ],
-        'ZestEat Feedback Options',
-        'Select Live Chat or Main Menu'
+        'ZestEat Feedback Prompt',
+        'Type feedback below or click an option'
       );
     } catch (err) {
       sentMessageResult = await sendTextMessage(
         cleanP,
-        responseSentText + `\n\n_Reply *LIVE CHAT* for support or *MENU* for main menu._`
+        responseSentText + `\n\n_Type your feedback directly in chat or reply STOP to exit._`
       );
     }
   }
 
-  // 6. Support & Live Chat Connection
-  else if (rawInput === 'btn_live_chat' || rawInput === 'live chat' || rawInput === 'chat' || rawInput === 'support' || (['FAQ_VIEW', 'FEEDBACK_VIEW'].includes(session.state) && (rawInput === '4' || rawInput === '5'))) {
+  // ── 6. CUSTOMER WRITES FEEDBACK INPUT -> THANK YOU GREETING ────────────────
+  else if (session.state === 'AWAITING_FEEDBACK_TEXT' && text && !rawInput.startsWith('btn_')) {
+    const customerFeedbackText = text.trim();
+    session.state = 'MAIN';
+    userSessions.set(cleanP, session);
+
+    responseSentText = `🎉 *Thank You for Choosing ZestEat!* 🍽️\n\n` +
+      `Dear ${userName},\n\n` +
+      `Thank you so much for sharing your valuable feedback with us:\n` +
+      `💬 _"${customerFeedbackText}"_\n\n` +
+      `We truly appreciate your time and support! Your feedback helps us continuously improve our food quality, packaging, and super-fast delivery services.\n\n` +
+      `We look forward to serving you another delicious meal soon! 💛\n\n` +
+      `🌐 *Website:* https://www.zesteat.in/\n` +
+      `📞 *Support Desk:* +91 8566856789`;
+
+    try {
+      sentMessageResult = await sendButtons(
+        cleanP,
+        responseSentText,
+        [
+          { buttonId: 'btn_order', buttonText: { displayText: '📦 Order Now' } },
+          { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } },
+          { buttonId: 'btn_stop_bot', buttonText: { displayText: '🛑 Stop Bot' } }
+        ],
+        'ZestEat Thank You',
+        'Thank you for choosing ZestEat!'
+      );
+    } catch (err) {
+      sentMessageResult = await sendTextMessage(cleanP, responseSentText);
+    }
+  }
+
+  // ── 7. SUPPORT & LIVE CHAT CONNECTION ──────────────────────────────────────
+  else if (rawInput === 'btn_live_chat' || rawInput === 'live chat' || rawInput === 'chat' || rawInput === 'support' || (['FAQ_VIEW', 'AWAITING_FEEDBACK_TEXT'].includes(session.state) && (rawInput === '4' || rawInput === '5'))) {
     session.state = 'LIVE_SUPPORT';
     userSessions.set(cleanP, session);
 
@@ -210,7 +270,8 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
         cleanP,
         responseSentText,
         [
-          { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } }
+          { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } },
+          { buttonId: 'btn_stop_bot', buttonText: { displayText: '🛑 Stop Bot' } }
         ],
         'ZestEat Live Support',
         'We are here to help you 24/7'
@@ -220,7 +281,7 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
     }
   }
 
-  // 7. Catch-all / Fallback for unhandled input -> Send Main Menu
+  // ── 8. CATCH-ALL FALLBACK FOR UNHANDLED INPUT ──────────────────────────────
   else {
     session.state = 'MAIN';
     userSessions.set(cleanP, session);
@@ -235,15 +296,16 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
         responseSentText,
         [
           { buttonId: 'btn_order', buttonText: { displayText: '📦 Order' } },
-          { buttonId: 'btn_feedback', buttonText: { displayText: '⭐ Feedback' } }
+          { buttonId: 'btn_feedback', buttonText: { displayText: '⭐ Feedback' } },
+          { buttonId: 'btn_stop_bot', buttonText: { displayText: '🛑 Stop Bot' } }
         ],
         'ZestEat Automated Menu',
-        'Select Order or Feedback to proceed'
+        'Select Order, Feedback or Stop Conversation'
       );
     } catch (err) {
       sentMessageResult = await sendTextMessage(
         cleanP,
-        `*ZestEat Automation Menu*\n\n${responseSentText}\n\n1️⃣ *Order*\n2️⃣ *Feedback*`
+        `*ZestEat Automation Menu*\n\n${responseSentText}\n\n1️⃣ *Order*\n2️⃣ *Feedback*\n3️⃣ *Stop Conversation* (Reply STOP)`
       );
     }
   }
