@@ -60,14 +60,18 @@ const sendRequest = async (payload) => {
 
 const sendTextMessage = async (phone, text) => {
   const to = formatPhone(phone);
-  console.log(`📤 [WA] Sending text to ${to}: "${text.replace(/\n/g, ' ').slice(0, 40)}..."`);
+  let finalText = text;
+  if (finalText && !finalText.toUpperCase().includes('STOP')) {
+    finalText = `${finalText}\n\n_Reply STOP to stop automated messages._`;
+  }
+  console.log(`📤 [WA] Sending text to ${to}: "${finalText.replace(/\n/g, ' ').slice(0, 40)}..."`);
   
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
     to,
     type: 'text',
-    text: { preview_url: false, body: text }
+    text: { preview_url: false, body: finalText }
   };
   
   return await sendRequest(payload);

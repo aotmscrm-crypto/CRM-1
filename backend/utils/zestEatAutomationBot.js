@@ -7,7 +7,7 @@ const userSessions = new Map();
 /**
  * ZestEat WhatsApp Automation Bot Handler
  * Exactly implements ZestEat_WhatsApp_Automated_Templates_Chart flow, Custom Feedback Capture,
- * and Stop Conversation Automation.
+ * and Stop Conversation Automation on EVERY message.
  */
 const handleZestEatAutomation = async ({ phone, text, payload, senderName, incomingPhoneId, incomingWabaId, io }) => {
   const cleanP = String(phone).replace(/\D/g, '');
@@ -85,21 +85,27 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
     responseSentText = `📦 *ZestEat Order Categories*\n\nPlease select an order subcategory below:`;
 
     try {
-      sentMessageResult = await sendButtons(
-        cleanP,
-        responseSentText,
-        [
-          { buttonId: 'btn_food', buttonText: { displayText: '🍕 Food' } },
-          { buttonId: 'btn_meat', buttonText: { displayText: '🥩 Meat' } },
-          { buttonId: 'btn_zesteat_market', buttonText: { displayText: '🏪 ZestEat Market' } }
-        ],
-        'Order Categories',
-        'Choose Food, Meat or ZestEat Market'
-      );
+      sentMessageResult = await sendListMenu(cleanP, {
+        title: 'ZestEat Order Categories 📦',
+        description: 'Please select an order subcategory below:',
+        buttonText: 'Select Category',
+        footer: 'Reply STOP anytime to stop conversation',
+        sections: [
+          {
+            title: 'Order Subcategories',
+            rows: [
+              { rowId: 'btn_food', title: '🍕 Food', description: 'Explore hot restaurant dishes' },
+              { rowId: 'btn_meat', title: '🥩 Meat', description: 'Fresh chicken, mutton, fish & seafood' },
+              { rowId: 'btn_zesteat_market', title: '🏪 ZestEat Market', description: 'Groceries & daily essentials' },
+              { rowId: 'btn_stop_bot', title: '🛑 Stop Conversation', description: 'Stop automated bot responses' }
+            ]
+          }
+        ]
+      });
     } catch (err) {
       sentMessageResult = await sendTextMessage(
         cleanP,
-        `*ZestEat Order Categories*\n\n${responseSentText}\n\n1️⃣ *Food*\n2️⃣ *Meat*\n3️⃣ *ZestEat Market*\n\n_Reply 1, 2, or 3 (or reply STOP to end conversation)_`
+        `*ZestEat Order Categories*\n\n${responseSentText}\n\n1️⃣ *Food*\n2️⃣ *Meat*\n3️⃣ *ZestEat Market*\n4️⃣ *Stop Conversation*\n\n_Reply 1, 2, 3, or STOP_`
       );
     }
   }
