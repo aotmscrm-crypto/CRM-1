@@ -6,7 +6,7 @@ const userSessions = new Map();
 
 /**
  * ZestEat WhatsApp Automation Bot Handler
- * Exactly implements ZestEat_WhatsApp_Automated_Templates_Chart flow, Custom Feedback Capture,
+ * Implements ZestEat_WhatsApp_Automated_Templates_Chart flow, Star Rating + Written Feedback Capture,
  * and Stop Conversation Automation on EVERY message.
  */
 const handleZestEatAutomation = async ({ phone, text, payload, senderName, incomingPhoneId, incomingWabaId, io }) => {
@@ -15,7 +15,7 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
   const userName = senderName || 'Customer';
 
   // Session state getter/setter
-  let session = userSessions.get(cleanP) || { state: 'MAIN', lastItem: '' };
+  let session = userSessions.get(cleanP) || { state: 'MAIN', lastItem: '', starRating: '' };
 
   let responseSentText = '';
   let sentMessageResult = null;
@@ -195,18 +195,64 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
     }
   }
 
-  // ── 5. MAIN OPTION SELECTION: FEEDBACK PROMPT ──────────────────────────────
+  // ── 5. MAIN OPTION SELECTION: FEEDBACK -> STEP 1: PROMPT STAR RATING ─────
   else if (rawInput === 'btn_feedback' || rawInput === 'feedback' || (session.state === 'MAIN' && (rawInput === '2' || rawInput === '2. feedback'))) {
-    session.state = 'AWAITING_FEEDBACK_TEXT';
+    session.state = 'AWAITING_STAR_RATING';
     userSessions.set(cleanP, session);
 
-    responseSentText = `⭐ *ZestEat Feedback & Rating*\n\n` +
+    responseSentText = `⭐ *ZestEat Rating & Feedback*\n\n` +
       `Hello ${userName}! 👋 Thank you for choosing *ZestEat*.\n\n` +
-      `We would love to hear about your experience! Please share your thoughts with us:\n\n` +
-      `1️⃣ How was your order & food quality?\n` +
-      `2️⃣ How was your delivery experience?\n` +
-      `3️⃣ Do you have any feedback or suggestions for us?\n\n` +
-      `✍️ *Please write and type your feedback message below and press Send:*`;
+      `We would love to rate your experience! Please select your star rating below:`;
+
+    try {
+      sentMessageResult = await sendListMenu(cleanP, {
+        title: 'ZestEat Star Rating ⭐',
+        description: 'Please select a star rating for your order:',
+        buttonText: 'Rate Your Experience',
+        footer: 'Your rating helps us serve you better',
+        sections: [
+          {
+            title: 'Star Ratings',
+            rows: [
+              { rowId: 'btn_star_5', title: '⭐⭐⭐⭐⭐ Excellent', description: '5 Stars - Amazing food & fast delivery' },
+              { rowId: 'btn_star_4', title: '⭐⭐⭐⭐ Good', description: '4 Stars - Great overall experience' },
+              { rowId: 'btn_star_3', title: '⭐⭐⭐ Average', description: '3 Stars - Satisfactory experience' },
+              { rowId: 'btn_star_2', title: '⭐⭐ Needs Work', description: '2 Stars - Improvement required' },
+              { rowId: 'btn_star_1', title: '⭐ Poor', description: '1 Star - Unsatisfactory experience' },
+              { rowId: 'btn_stop_bot', title: '🛑 Stop Conversation', description: 'Stop automated bot responses' }
+            ]
+          }
+        ]
+      });
+    } catch (err) {
+      sentMessageResult = await sendTextMessage(
+        cleanP,
+        `⭐ *ZestEat Star Rating*\n\n${responseSentText}\n\n5️⃣ ⭐⭐⭐⭐⭐ (5 Stars)\n4️⃣ ⭐⭐⭐⭐ (4 Stars)\n3️⃣ ⭐⭐⭐ (3 Stars)\n2️⃣ ⭐⭐ (2 Stars)\n1️⃣ ⭐ (1 Star)\n\n_Reply 1 to 5 to rate us._`
+      );
+    }
+  }
+
+  // ── 6. STAR RATING SELECTED -> STEP 2: PROMPT FOR WRITTEN FEEDBACK TEXT ──
+  else if (
+    session.state === 'AWAITING_STAR_RATING' && (
+      rawInput.startsWith('btn_star_') || ['5', '4', '3', '2', '1'].includes(rawInput) ||
+      rawInput.includes('star') || rawInput.includes('excellent') || rawInput.includes('good')
+    )
+  ) {
+    let ratingStr = '⭐⭐⭐⭐⭐ Excellent (5/5 Stars)';
+    if (rawInput.includes('4') || rawInput === 'btn_star_4') ratingStr = '⭐⭐⭐⭐ Good (4/5 Stars)';
+    else if (rawInput.includes('3') || rawInput === 'btn_star_3') ratingStr = '⭐⭐⭐ Average (3/5 Stars)';
+    else if (rawInput.includes('2') || rawInput === 'btn_star_2') ratingStr = '⭐⭐ Needs Work (2/5 Stars)';
+    else if (rawInput.includes('1') || rawInput === 'btn_star_1') ratingStr = '⭐ Poor (1/5 Star)';
+
+    session.state = 'AWAITING_FEEDBACK_TEXT';
+    session.starRating = ratingStr;
+    userSessions.set(cleanP, session);
+
+    responseSentText = `⭐ *ZestEat Feedback Message*\n\n` +
+      `Thank you for rating us *${ratingStr}*! 🙏\n\n` +
+      `✍️ *Please write and type your feedback message below and press Send:*\n` +
+      `(Share your thoughts about food taste, packaging, delivery speed, or suggestions)`;
 
     try {
       sentMessageResult = await sendButtons(
@@ -217,28 +263,31 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
           { buttonId: 'btn_main_menu', buttonText: { displayText: '🔙 Main Menu' } },
           { buttonId: 'btn_stop_bot', buttonText: { displayText: '🛑 Stop Bot' } }
         ],
-        'ZestEat Feedback Prompt',
-        'Type feedback below or click an option'
+        'ZestEat Feedback Message',
+        'Type your feedback directly below and press Send'
       );
     } catch (err) {
       sentMessageResult = await sendTextMessage(
         cleanP,
-        responseSentText + `\n\n_Type your feedback directly in chat or reply STOP to exit._`
+        responseSentText + `\n\n_Type your feedback directly in chat and press Send!_`
       );
     }
   }
 
-  // ── 6. CUSTOMER WRITES FEEDBACK INPUT -> THANK YOU GREETING ────────────────
+  // ── 7. CUSTOMER WRITES FEEDBACK INPUT -> SEND PERSONALIZED THANK YOU GREETING! ──
   else if (session.state === 'AWAITING_FEEDBACK_TEXT' && text && !rawInput.startsWith('btn_')) {
     const customerFeedbackText = text.trim();
+    const starRatingDisplay = session.starRating || '⭐⭐⭐⭐⭐ (5/5 Stars)';
+    
     session.state = 'MAIN';
     userSessions.set(cleanP, session);
 
     responseSentText = `🎉 *Thank You for Choosing ZestEat!* 🍽️\n\n` +
       `Dear ${userName},\n\n` +
-      `Thank you so much for sharing your valuable feedback with us:\n` +
-      `💬 _"${customerFeedbackText}"_\n\n` +
-      `We truly appreciate your time and support! Your feedback helps us continuously improve our food quality, packaging, and super-fast delivery services.\n\n` +
+      `Thank you so much for your feedback and rating! We truly appreciate your time and support.\n\n` +
+      `⭐ *Your Rating:* ${starRatingDisplay}\n` +
+      `💬 *Your Feedback:* _"${customerFeedbackText}"_\n\n` +
+      `Your input helps us continuously improve our food quality, packaging, and super-fast delivery services.\n\n` +
       `We look forward to serving you another delicious meal soon! 💛\n\n` +
       `🌐 *Website:* https://www.zesteat.in/\n` +
       `📞 *Support Desk:* +91 8566856789`;
@@ -260,8 +309,8 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
     }
   }
 
-  // ── 7. SUPPORT & LIVE CHAT CONNECTION ──────────────────────────────────────
-  else if (rawInput === 'btn_live_chat' || rawInput === 'live chat' || rawInput === 'chat' || rawInput === 'support' || (['FAQ_VIEW', 'AWAITING_FEEDBACK_TEXT'].includes(session.state) && (rawInput === '4' || rawInput === '5'))) {
+  // ── 8. SUPPORT & LIVE CHAT CONNECTION ──────────────────────────────────────
+  else if (rawInput === 'btn_live_chat' || rawInput === 'live chat' || rawInput === 'chat' || rawInput === 'support' || (['FAQ_VIEW', 'AWAITING_FEEDBACK_TEXT', 'AWAITING_STAR_RATING'].includes(session.state) && (rawInput === '4' || rawInput === '5'))) {
     session.state = 'LIVE_SUPPORT';
     userSessions.set(cleanP, session);
 
@@ -287,7 +336,7 @@ const handleZestEatAutomation = async ({ phone, text, payload, senderName, incom
     }
   }
 
-  // ── 8. CATCH-ALL FALLBACK FOR UNHANDLED INPUT ──────────────────────────────
+  // ── 9. CATCH-ALL FALLBACK FOR UNHANDLED INPUT ──────────────────────────────
   else {
     session.state = 'MAIN';
     userSessions.set(cleanP, session);
