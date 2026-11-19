@@ -1,0 +1,6 @@
+- Feature pages are implemented as single-file React function components exported as default, with route registration centralized in `src/App.jsx` rather than nested route files.
+- Backend URLs are resolved dynamically per call site using the same ternary pattern: check `import.meta.env.VITE_API_BASE_URL`, then fall back to `http://localhost:5000` when `window.location.hostname` is `localhost`/`127.0.0.1`, else use the Render-hosted URL.
+- Persistent client data (user profile, JWT token, active dashboard tab, integration credentials) is stored under explicit `localStorage` key prefixes like `crm_*` and `aotms_*` and rehydrated on component mount.
+- Form inputs use `react-hook-form`'s `register` with inline `required`/`minLength`/`pattern` validators, and error messages are rendered next to the field via `formState.errors`.
+- UI styling relies on Tailwind utility classes applied directly in JSX (no CSS-in-JS), with Radix Theme tokens (`slate-*`, `emerald-*`, `rose-*`) providing the color palette.
+- Icons are imported from `lucide-react` (functional components) and `react-icons/io5` (named exports) and passed as props or rendered inline alongside text labels.

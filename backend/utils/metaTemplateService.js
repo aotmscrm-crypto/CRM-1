@@ -127,10 +127,35 @@ const createTemplateOnMeta = async (name, language, category, components) => {
     return response.data; 
   } catch (error) {
     const errData = error.response?.data?.error;
-    const errorMsg = errData?.message || error.message || 'Unknown Meta Template Error';
+    const errorMsg = errData?.error_user_msg || errData?.message || error.message || 'Unknown Meta Template Error';
     console.error('❌ [WA] Meta Template Creation Error:', JSON.stringify(errData || error.message, null, 2));
     const err = new Error(errorMsg);
     err.metaError = errData;
+    err.status = 400;
+    throw err;
+  }
+};
+
+/**
+ * Deletes a template on Meta.
+ * `POST /{wabaId}/message_templates` creates templates, DELETE on the same edge
+ * removes every language variant of the given name.
+ */
+const deleteTemplateOnMeta = async (name, metaTemplateId) => {
+  const config = await getMetaConfig();
+  try {
+    const params = metaTemplateId
+      ? { name, hsm_id: metaTemplateId }
+      : { name };
+    const response = await axios.delete(config.url, { headers: config.headers, params });
+    return response.data;
+  } catch (error) {
+    const errData = error.response?.data?.error;
+    const errorMsg = errData?.error_user_msg || errData?.message || error.message || 'Failed to delete Meta template';
+    console.error('❌ [WA] Meta Template Delete Error:', JSON.stringify(errData || error.message, null, 2));
+    const err = new Error(errorMsg);
+    err.metaError = errData;
+    err.status = 400;
     throw err;
   }
 };
@@ -140,7 +165,7 @@ const fetchAllTemplatesFromMeta = async () => {
   try {
     const response = await axios.get(config.url, {
       headers: config.headers,
-      params: { limit: 100, fields: 'id,name,status,category,language,components' }
+      params: { limit: 100, fields: 'id,name,status,category,language,components,source' }
     });
     return response.data?.data || [];
   } catch (error) {
@@ -221,6 +246,7 @@ const uploadMediaForSending = async (filePath, mimeType) => {
 
 module.exports = {
   createTemplateOnMeta,
+  deleteTemplateOnMeta,
   getTemplateStatusFromMeta,
   uploadMediaToMeta,
   uploadMediaForSending,

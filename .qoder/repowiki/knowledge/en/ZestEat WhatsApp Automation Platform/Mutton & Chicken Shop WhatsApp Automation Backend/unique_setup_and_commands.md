@@ -1,0 +1,1 @@
+Requires a `.env` file with `MONGODB_URI`, `JWT_SECRET`, and `PORT`; start with `npm run dev` (nodemon) or `npm start`. The default MongoDB database name is `mutton_chicken_shop` when no URI is provided.

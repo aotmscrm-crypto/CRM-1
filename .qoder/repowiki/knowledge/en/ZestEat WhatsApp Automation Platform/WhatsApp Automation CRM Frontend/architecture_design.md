@@ -1,0 +1,7 @@
+Entry point `src/main.jsx` mounts React via `createRoot` inside a Radix UI `<Theme>` provider (dark mode, orange accent). `src/App.jsx` declares top-level routes with `react-router-dom`: `/` → LandingPage, `/auth`, `/login`, `/signup` → AuthPage, `/dashboard` → DashboardPage, plus a catch-all redirect.
+
+- Feature modules are organized as sibling directories: `Auth/`, `LandingPage/`, `Dashboard/` — each exporting a default component that owns its own tab/route state.
+- Shared primitives live under `Components/ui/` (button, confirm modal, skeleton, toast, auth-switch) and `lib/utils.{js,ts}`; these are pure presentational components consumed by feature pages.
+- Global client state is minimal: `Stores/useStore.js` exposes a tiny Zustand store (count/inc), while most app state lives in component local state or `localStorage` keys (`crm_user`, `crm_token`, `crm_active_tab`, `aotms_whatsapp_config`, `aotms_instagram_config`).
+- Backend communication is centralized in `services/api.js` which derives `API_BASE_URL` from `import.meta.env.VITE_API_BASE_URL`, falling back to `http://localhost:5000` on localhost and `https://crm-1-62pl.onrender.com` otherwise; it exposes REST helpers (`checkBackendHealth`, `queryGraphQL`, `sendLiveMessage`) and WebSocket URL derivation.
+- Build tooling: Vite config enables `@vitejs/plugin-react`, Tailwind v4 via `@tailwindcss/vite`, an `@` path alias pointing at `./src`, and a dev proxy forwarding `/api` to `http://127.0.0.1:8000`. Deployment target is Vercel (`vercel.json`).

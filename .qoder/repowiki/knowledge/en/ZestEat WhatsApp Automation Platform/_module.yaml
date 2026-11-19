@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: ""
+title: ZestEat WhatsApp Automation Platform
+scope:
+    - .kilo/
+    - Hackathon.jpeg
+    - ZestEat_WhatsApp_Automated_Templates_Chart (1).docx
+source_files: []
+depends_on: []
+related_to: []

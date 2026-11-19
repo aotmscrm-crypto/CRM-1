@@ -1,0 +1,1 @@
+Express 4 + Socket.io 4 for HTTP/WebSockets, Mongoose 7 against MongoDB, JWT for auth, node-cron for scheduled broadcasts, axios/form-data for Meta Graph API calls, multer for multipart uploads, cloudinary SDK for media hosting, xlsx for spreadsheet import, pino for logging.

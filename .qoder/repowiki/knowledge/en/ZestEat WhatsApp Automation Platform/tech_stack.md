@@ -1,0 +1,1 @@
+Express + Socket.io on the backend; React + Vite on the frontend; both integrate with Meta's WhatsApp Business API.

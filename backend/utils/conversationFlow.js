@@ -110,7 +110,11 @@ const startMetaTemplate = async (phone, template) => {
   }
 
   try {
-    return await sendMetaTemplate(sp, template.name, template.language, components);
+    // The category lets whatsappService route MARKETING templates through the
+    // Marketing Messages API (/marketing_messages) instead of /messages.
+    return await sendMetaTemplate(sp, template.name, template.language, components, {
+      category: template.category,
+    });
   } catch (e) {
     console.log(`❌ Failed to send Meta Template to ${sp}:`, e.message);
     throw e;

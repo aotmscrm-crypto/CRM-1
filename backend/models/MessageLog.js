@@ -14,6 +14,9 @@ const messageLogSchema = new mongoose.Schema({
   errorCode:      { type: Number, default: null },
   errorMessage:   { type: String, default: null },
   pricing:        { type: Object, default: null },
+  // `conversation.origin.type` from the status webhook. `marketing_lite` means the
+  // message went out through the Marketing Messages API for WhatsApp.
+  conversationOrigin: { type: String, default: null },
   phoneId:        { type: String, default: null },
   wabaId:         { type: String, default: null }
 }, { timestamps: true });

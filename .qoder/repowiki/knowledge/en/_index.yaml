@@ -1,0 +1,40 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: en-US
+branch: main
+nodes_managed: true
+exported_at: "2026-11-19T15:43:48Z"
+modules:
+    "":
+        dir_name: ZestEat WhatsApp Automation Platform
+        title: ZestEat WhatsApp Automation Platform
+        scope:
+            - .kilo/
+            - Hackathon.jpeg
+            - ZestEat_WhatsApp_Automated_Templates_Chart (1).docx
+        source_files: []
+        children:
+            - backend
+            - frontend
+        depends_on: []
+        related_to: []
+    backend:
+        dir_name: Mutton & Chicken Shop WhatsApp Automation Backend
+        title: Mutton & Chicken Shop WhatsApp Automation Backend
+        scope:
+            - backend/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: frontend
+    frontend:
+        dir_name: WhatsApp Automation CRM Frontend
+        title: WhatsApp Automation CRM Frontend
+        scope:
+            - frontend/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend

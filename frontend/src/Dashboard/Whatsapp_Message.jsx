@@ -90,6 +90,134 @@ const getChatDateHeaderLabel = (dateObj) => {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
+// ── Template studio rules ─────────────────────────────────────────────────────
+// Mirrors backend/utils/templateBuilder.js. Kept here so the form can validate
+// before a round-trip; the backend re-validates everything anyway.
+const TEMPLATE_LIMITS = {
+  headerTextMax: 60,
+  bodyMax: 1024,
+  footerMax: 60,
+  // Meta caps template button labels at 20 characters.
+  buttonTextMax: 20,
+  maxButtonsTotal: 10,
+  urlButtonMax: 2,
+  phoneButtonMax: 1,
+  // Meta Direct Send (business-initiated messages without a template)
+  directSendBodyMax: 1024,
+  directSendHeaderTextMax: 60,
+  // Interactive messages allow at most 3 reply buttons, or a single CTA URL.
+  directSendQuickReplyMax: 3,
+  directSendTtlMinutesMax: 43200,
+};
+
+const PROMOTIONAL_PATTERNS = [
+  /\b(offer|offers|discount|discounts|sale|deal|deals|save|saving|savings)\b/i,
+  /\b(coupon|promo|promotion|promotional|freebie|giveaway)\b/i,
+  /\b(flat\s*\d+%?|\d+\s*%\s*off)\b/i,
+  /\b(limited\s+time|hurry|act\s+now|don'?t\s+miss)\b/i,
+];
+
+const looksPromotional = (text) => PROMOTIONAL_PATTERNS.some((re) => re.test(String(text || '')));
+
+const slugifyTemplateName = (raw) =>
+  String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+
+/** Unique body variables in first-appearance order (`{{1}}` and `{{name}}` both work). */
+const extractBodyVariables = (text) => {
+  const matches = String(text || '').match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) || [];
+  const keys = [];
+  matches.forEach((match) => {
+    const key = match.replace(/[{}\s]/g, '');
+    if (key && !keys.includes(key)) keys.push(key);
+  });
+  return keys;
+};
+
+const defaultSampleFor = (key, index) => {
+  const lower = String(key || '').toLowerCase();
+  if (lower.includes('name')) return 'Priya Sharma';
+  if (lower.includes('order')) return 'ORD-10482';
+  if (lower.includes('amount') || lower.includes('price') || lower.includes('total')) return '₹1,299';
+  if (lower.includes('date')) return '19 Nov 2026';
+  if (lower.includes('code') || lower.includes('coupon')) return 'SAVE20';
+  if (lower.includes('time')) return '6:30 PM';
+  return `Sample ${index + 1}`;
+};
+
+// Category starters — a working, Meta-valid example for each category.
+// GET /api/template/presets can override these at runtime.
+const FALLBACK_PRESETS = {
+  MARKETING: {
+    label: 'Marketing',
+    description: 'Offers, launches and re-engagement.',
+    header_type: 'IMAGE',
+    header_text: '',
+    body_text:
+      'Hi {{1}}! 🎉 Our festive offer is live — get {{2}} off your next order at ZestEat. Tap below to browse the menu.',
+    footer_text: 'ZestEat • Reply STOP to opt out',
+    samples: ['Priya', '25%'],
+    buttons: [
+      { type: 'URL', text: 'View Offer', url: 'https://www.zesteat.in/' },
+      { type: 'QUICK_REPLY', text: 'Stop Promos' },
+    ],
+  },
+  UTILITY: {
+    label: 'Utility',
+    description: 'Order, delivery and account updates.',
+    header_type: 'TEXT',
+    header_text: 'Order Confirmed',
+    body_text:
+      'Hi {{1}}, your order {{2}} for {{3}} has been confirmed and will be delivered by {{4}}. Track it from your account.',
+    footer_text: 'ZestEat Support • +91 8566856789',
+    samples: ['Priya', 'ORD-10482', '₹1,299', '6:30 PM'],
+    buttons: [
+      { type: 'URL', text: 'Track Order', url: 'https://www.zesteat.in/orders' },
+      { type: 'PHONE_NUMBER', text: 'Call Support', phone_number: '+918566856789' },
+    ],
+  },
+  AUTHENTICATION: {
+    label: 'Authentication',
+    description: 'One-time passcodes (Meta writes the body).',
+    header_type: 'NONE',
+    header_text: '',
+    body_text: '',
+    footer_text: '',
+    samples: [],
+    buttons: [{ type: 'OTP' }],
+    code_expiration_minutes: 10,
+  },
+};
+
+/** Builds the studio form state for a given category. */
+const formFromPreset = (category, presets = FALLBACK_PRESETS) => {
+  const preset = presets[category] || {};
+  return {
+    name: '',
+    category,
+    language: 'en',
+    header_type: preset.header_type || 'NONE',
+    header_text: preset.header_text || '',
+    header_image_url: '',
+    body_text: preset.body_text || '',
+    footer_text: preset.footer_text || '',
+    sample_values: preset.samples || [],
+    buttons: (preset.buttons || []).map((btn) => ({
+      type: btn.type,
+      text: btn.text || '',
+      url: btn.url || '',
+      phone_number: btn.phone_number || '',
+      contact_name: '',
+    })),
+    code_expiration_minutes: preset.code_expiration_minutes ?? 10,
+  };
+};
+
 export default function WhatsappMessage() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -117,6 +245,18 @@ export default function WhatsappMessage() {
   const [selectedChatTemplate, setSelectedChatTemplate] = useState('');
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [sendingChatMsg, setSendingChatMsg] = useState(false);
+  // Meta Direct Send: business-initiated utility/authentication without a template.
+  const [directSendMode, setDirectSendMode] = useState(false);
+  const [dsCategory, setDsCategory] = useState('utility');
+  const [dsTemplateName, setDsTemplateName] = useState('');
+  const [dsTtlMinutes, setDsTtlMinutes] = useState('');
+  // Direct Send interactive extras: one media/text header plus optional buttons.
+  const [dsHeaderType, setDsHeaderType] = useState('none');
+  const [dsHeaderText, setDsHeaderText] = useState('');
+  const [dsHeaderLink, setDsHeaderLink] = useState('');
+  const [dsHeaderId, setDsHeaderId] = useState('');
+  const [dsHeaderFilename, setDsHeaderFilename] = useState('');
+  const [dsButtons, setDsButtons] = useState([]);
   const [chatLogMap, setChatLogMap] = useState({});
   const [unreadMap, setUnreadMap] = useState({}); // { [phone10]: count }
   const [lastSeenMap, setLastSeenMap] = useState(() => {
@@ -128,6 +268,8 @@ export default function WhatsappMessage() {
   });
   const [latestMsgTimeMap, setLatestMsgTimeMap] = useState({}); // { [phone10]: timestamp }
   const chatBottomRef = useRef(null);
+  // Monotonic id for optimistic Direct Send bubbles (avoids impure Date.now()).
+  const tempMsgSeq = useRef(0);
 
   // Handle contact selection & automatically turn OFF unread badge
   const handleSelectContact = (c) => {
@@ -168,41 +310,69 @@ export default function WhatsappMessage() {
   const fileInputRef = useRef(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
+  // true when the template being edited already lives on Meta (content is immutable there)
+  const [editingOnMeta, setEditingOnMeta] = useState(false);
+  const [categoryPresets, setCategoryPresets] = useState(FALLBACK_PRESETS);
+  const [submitError, setSubmitError] = useState(null);
 
   // Create Template Form State (Declared BEFORE useEffect)
-  const [formData, setFormData] = useState({
-    name: '',
-    category: 'MARKETING',
-    language: 'en',
-    header_type: 'IMAGE', // 'NONE', 'TEXT', 'IMAGE'
-    header_text: '',
-    header_image_url: '',
-    body_text: 'Welcome to AOTMS Enterprise Solutions. Claim your exclusive discount on all WhatsApp automation tools.',
-    footer_text: 'AOTMS',
-    buttons: [
-      { type: 'PHONE_NUMBER', text: 'Call Support', phone_number: '+91 8566856789', url: '', contact_name: '' },
-      { type: 'URL', text: 'Visit Website', phone_number: '', url: 'https://www.zesteat.in/', contact_name: '' }
-    ]
-  });
+  const [formData, setFormData] = useState(() => formFromPreset('MARKETING'));
 
   const openCreateModal = () => {
     setEditingTemplateId(null);
+    setEditingOnMeta(false);
     setSelectedFile(null);
-    setFormData({
-      name: '',
-      category: 'MARKETING',
-      language: 'en',
-      header_type: 'IMAGE',
-      header_text: '',
-      header_image_url: '',
-      body_text: 'Welcome to AOTMS Enterprise Solutions. Claim your exclusive discount on all WhatsApp automation tools.',
-      footer_text: 'AOTMS',
-      buttons: [
-        { type: 'PHONE_NUMBER', text: 'Call Support', phone_number: '+918566856789', url: '', contact_name: '' },
-        { type: 'URL', text: 'Visit Website', phone_number: '', url: 'https://www.zesteat.in/', contact_name: '' }
-      ]
-    });
+    setSubmitError(null);
+    setFormData(formFromPreset('MARKETING', categoryPresets));
     setShowCreateModal(true);
+  };
+
+  /**
+   * Switching category swaps in that category's starter copy, but only while the
+   * body is still blank or still an untouched preset — never clobbers typing.
+   */
+  const applyCategoryPreset = (category) => {
+    const preset = categoryPresets[category] || FALLBACK_PRESETS[category] || {};
+    const currentBody = String(formData.body_text || '').trim();
+    const untouched = !currentBody
+      || Object.values(categoryPresets).some((p) => String(p.body_text || '').trim() === currentBody);
+
+    setSubmitError(null);
+    setFormData((prev) => (untouched
+      ? {
+          ...formFromPreset(category, categoryPresets),
+          name: prev.name,
+          language: prev.language,
+          header_image_url: category === 'AUTHENTICATION' ? '' : prev.header_image_url,
+        }
+      : { ...prev, category }));
+
+    if (category === 'AUTHENTICATION') setSelectedFile(null);
+
+    if (untouched) {
+      showToast(`${preset.label || category} starter loaded — adjust it before submitting.`, 'info');
+    }
+  };
+
+  /** Keeps the sample-value list aligned with the variables in the body. */
+  const handleBodyTextChange = (value) => {
+    const vars = extractBodyVariables(value);
+    setFormData((prev) => {
+      const previous = Array.isArray(prev.sample_values) ? prev.sample_values : [];
+      return {
+        ...prev,
+        body_text: value,
+        sample_values: vars.map((key, idx) => previous[idx] || defaultSampleFor(key, idx)),
+      };
+    });
+  };
+
+  const handleSampleValueChange = (index, value) => {
+    setFormData((prev) => {
+      const next = Array.isArray(prev.sample_values) ? [...prev.sample_values] : [];
+      next[index] = value;
+      return { ...prev, sample_values: next };
+    });
   };
 
   // Automatic smooth scroll behavior when content or buttons change
@@ -249,6 +419,24 @@ export default function WhatsappMessage() {
     setTimeout(() => setToastMessage(null), 5000);
   };
 
+  // Pull the real presets/limits from the backend once; fall back silently.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/api/template/presets`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.presets) {
+          setCategoryPresets({ ...FALLBACK_PRESETS, ...data.presets });
+        }
+      } catch (err) {
+        // Offline or older backend: the local presets still work.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const [syncingMeta, setSyncingMeta] = useState(false);
 
   const mapTemplateFromDb = (t) => {
@@ -269,8 +457,11 @@ export default function WhatsappMessage() {
     let headerContent = headerImageUrl || headerText || t.header_content || '';
     let bodyText = t.message || bodyComp?.text || t.body_text || t.title || 'Welcome to AOTMS!';
     let footerText = t.footer || footerComp?.text || t.footer_text || '';
+    const sampleValues = Array.isArray(t.sample_values) && t.sample_values.length
+      ? t.sample_values
+      : (bodyComp?.example?.body_text?.[0] || []);
 
-    let buttonsList = [];
+    let buttonsList;
     try {
       buttonsList = typeof t.buttons === 'string' ? JSON.parse(t.buttons) : (t.buttons || buttonsComp?.buttons || []);
     } catch (e) {
@@ -293,8 +484,14 @@ export default function WhatsappMessage() {
       header_content: headerContent,
       body_text: bodyText,
       footer_text: footerText,
+      sample_values: sampleValues,
       buttons: buttonsList,
-      meta_template_id: t.metaTemplateId || t._id
+      meta_template_id: t.metaTemplateId || t._id,
+      // Meta Direct Send auto-generates templates (source AUTO_GENERATED) and
+      // forbids editing or deleting them.
+      is_auto_generated: Boolean(t.isAutoGenerated)
+        || String(t.source || '').toUpperCase() === 'AUTO_GENERATED'
+        || /^auto_generated/i.test(t.name || '')
     };
   };
 
@@ -499,7 +696,7 @@ export default function WhatsappMessage() {
           const isIncoming = log.direction === 'INCOMING' || log.status === 'received';
           const timestampDate = log.timestamp ? new Date(log.timestamp) : new Date();
 
-          let parsedButtons = [];
+          let parsedButtons;
           try {
             parsedButtons = typeof log.buttons === 'string' ? JSON.parse(log.buttons) : (log.buttons || []);
           } catch (e) {
@@ -609,6 +806,158 @@ export default function WhatsappMessage() {
     }
   }, [selectedContact?.phone, viewMode]);
 
+  // Direct Send button editing. Meta allows up to 3 reply buttons, or one CTA URL.
+  const addDsButton = (type) => {
+    setDsButtons((prev) => {
+      if (prev.length >= TEMPLATE_LIMITS.directSendQuickReplyMax) return prev;
+      if (prev.some((btn) => btn.type === 'cta_url')) return prev;
+      if (type === 'cta_url') return [{ type: 'cta_url', text: '', url: '' }];
+      return [...prev, { type: 'reply', text: '', url: '' }];
+    });
+  };
+
+  const updateDsButton = (index, patch) => {
+    setDsButtons((prev) => prev.map((btn, i) => (i === index ? { ...btn, ...patch } : btn)));
+  };
+
+  const removeDsButton = (index) => {
+    setDsButtons((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  /**
+   * Meta Direct Send — adds `category` to the /messages call so a utility or
+   * authentication message can be sent outside the 24-hour service window
+   * without an approved template. Marketing is not supported.
+   */
+  const postDirectSend = async () => {
+    const targetPhone = selectedContact.phone;
+    const msgText = chatMessageText.trim();
+    const ttlMinutes = Number(dsTtlMinutes);
+
+    if (msgText.length > TEMPLATE_LIMITS.directSendBodyMax) {
+      showToast(`Message must be at most ${TEMPLATE_LIMITS.directSendBodyMax} characters.`, 'error');
+      return;
+    }
+    if (dsTtlMinutes !== ''
+      && (!Number.isFinite(ttlMinutes) || ttlMinutes < 1 || ttlMinutes > TEMPLATE_LIMITS.directSendTtlMinutesMax)) {
+      showToast(`TTL must be between 1 and ${TEMPLATE_LIMITS.directSendTtlMinutesMax} minutes.`, 'error');
+      return;
+    }
+
+    // ── interactive extras: media/text header + buttons ──────────────────
+    const activeButtons = dsButtons
+      .map((btn) => ({
+        type: btn.type,
+        text: String(btn.text || '').trim(),
+        url: String(btn.url || '').trim(),
+      }))
+      .filter((btn) => btn.text);
+
+    if (dsHeaderType === 'text') {
+      if (!dsHeaderText.trim()) {
+        showToast('Add the header text, or set Header to None.', 'error');
+        return;
+      }
+      if (dsHeaderText.trim().length > TEMPLATE_LIMITS.directSendHeaderTextMax) {
+        showToast(`Header text must be at most ${TEMPLATE_LIMITS.directSendHeaderTextMax} characters.`, 'error');
+        return;
+      }
+    }
+    if (['image', 'video', 'document'].includes(dsHeaderType)
+      && !dsHeaderLink.trim() && !dsHeaderId.trim()) {
+      showToast(`A ${dsHeaderType} header needs a public link or a media ID.`, 'error');
+      return;
+    }
+    if (dsHeaderLink.trim() && !/^https?:\/\//i.test(dsHeaderLink.trim())) {
+      showToast('Header link must start with http:// or https://', 'error');
+      return;
+    }
+    // Headers only exist on interactive messages, so they need at least one button.
+    if (dsHeaderType !== 'none' && !activeButtons.length) {
+      showToast('A header can only be attached to an interactive message — add at least one button.', 'error');
+      return;
+    }
+    const ctaIndex = activeButtons.findIndex((btn) => btn.type === 'cta_url');
+    if (ctaIndex >= 0 && activeButtons.length > 1) {
+      showToast('A call-to-action link must be the only button on the message.', 'error');
+      return;
+    }
+    if (activeButtons.length > TEMPLATE_LIMITS.directSendQuickReplyMax) {
+      showToast(`Up to ${TEMPLATE_LIMITS.directSendQuickReplyMax} reply buttons are allowed.`, 'error');
+      return;
+    }
+    if (activeButtons.some((btn) => btn.text.length > TEMPLATE_LIMITS.buttonTextMax)) {
+      showToast(`Button text must be at most ${TEMPLATE_LIMITS.buttonTextMax} characters.`, 'error');
+      return;
+    }
+    if (ctaIndex >= 0 && !/^https?:\/\//i.test(activeButtons[ctaIndex].url)) {
+      showToast('The call-to-action button needs a URL starting with http:// or https://', 'error');
+      return;
+    }
+
+    setSendingChatMsg(true);
+    try {
+      const res = await fetch(`${getApiBase()}/api/contacts/send-direct`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: targetPhone,
+          message: msgText,
+          category: dsCategory,
+          templateName: dsTemplateName.trim() || undefined,
+          ttlSeconds: dsTtlMinutes === '' ? undefined : Math.round(ttlMinutes * 60),
+          header: dsHeaderType === 'none' ? undefined : {
+            type: dsHeaderType,
+            text: dsHeaderText.trim(),
+            link: dsHeaderLink.trim(),
+            id: dsHeaderId.trim(),
+            filename: dsHeaderFilename.trim(),
+          },
+          buttons: activeButtons.map((btn) => ({
+            type: btn.type,
+            text: btn.text,
+            url: btn.type === 'cta_url' ? btn.url : undefined,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        const meta = data.metaError;
+        const detail = [data.message || meta?.message, meta?.hint].filter(Boolean).join(' — ');
+        throw new Error(detail || 'Direct Send failed.');
+      }
+
+      const label = dsCategory === 'authentication' ? 'Authentication' : 'Utility';
+      const note = data.warnings?.[0] ? ` Note: ${data.warnings[0]}` : '';
+      showToast(`${label} message sent via Direct Send!${note}`, 'success');
+      setChatMessageText('');
+
+      // Optimistic UI update so the bubble appears before the next poll.
+      const cleanKey = getCleanPhone10(targetPhone);
+      const now = new Date();
+      tempMsgSeq.current += 1;
+      const tempMsg = {
+        id: `opt_ds_${tempMsgSeq.current}`,
+        type: 'OUTGOING',
+        text: msgText,
+        senderName: 'Business',
+        rawTimestamp: now,
+        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        status: 'sent'
+      };
+      setChatLogMap(prev => ({
+        ...prev,
+        [cleanKey]: [...(prev[cleanKey] || []), tempMsg]
+      }));
+
+      setTimeout(() => fetchChatLogs(targetPhone), 800);
+    } catch (err) {
+      showToast(err.message || 'Direct Send failed.', 'error');
+    } finally {
+      setSendingChatMsg(false);
+    }
+  };
+
   // Send Direct Text Message in Live WhatsApp Chat
   const handleSendDirectChatMessage = async (e) => {
     e.preventDefault();
@@ -618,6 +967,12 @@ export default function WhatsappMessage() {
     }
     if (!chatMessageText.trim()) {
       showToast("Please enter a message to send.", "error");
+      return;
+    }
+
+    // Direct Send takes a different endpoint and does not need a template.
+    if (directSendMode) {
+      await postDirectSend();
       return;
     }
 
@@ -760,126 +1115,219 @@ export default function WhatsappMessage() {
     reader.readAsDataURL(file);
   };
 
-  // Build Meta Components array from formData
-  const buildMetaComponents = (data) => {
-    const components = [];
-    if (data.header_type === 'TEXT' && data.header_text) {
-      components.push({ type: 'HEADER', format: 'TEXT', text: data.header_text });
-    } else if (data.header_type === 'IMAGE' && (selectedFile || data.header_image_url)) {
-      components.push({ type: 'HEADER', format: 'IMAGE' });
+  // ── Client-side validation (mirrors backend/utils/templateBuilder.js) ──────
+  const validateTemplateForm = () => {
+    const errors = [];
+    if (!slugifyTemplateName(formData.name)) {
+      errors.push('Template name may only contain lowercase letters, numbers and underscores.');
     }
-    const bodyComp = { type: 'BODY', text: data.body_text || 'Welcome to AOTMS!' };
-    components.push(bodyComp);
-    if (data.footer_text) {
-      components.push({ type: 'FOOTER', text: data.footer_text });
-    }
-    if (Array.isArray(data.buttons) && data.buttons.length > 0) {
-      const formattedBtns = data.buttons.map(b => {
-        if (b.type === 'PHONE_NUMBER') return { type: 'PHONE_NUMBER', text: b.text, phone_number: b.phone_number };
-        if (b.type === 'URL') return { type: 'URL', text: b.text, url: b.url };
-        return { type: 'QUICK_REPLY', text: b.text || 'Reply' };
-      });
-      components.push({ type: 'BUTTONS', buttons: formattedBtns });
-    }
-    return components;
-  };
 
-  // Real-time API: Create or Update template directly via API
-  const handleCreateTemplate = async (e) => {
-    e.preventDefault();
+    if (formData.category === 'AUTHENTICATION') {
+      const minutes = Number(formData.code_expiration_minutes ?? 10);
+      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 90) {
+        errors.push('Code expiration must be between 1 and 90 minutes.');
+      }
+      return errors;
+    }
 
-    const formattedName = formData.name.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-    if (!formattedName) {
-      showToast("Please enter a valid template name (lowercase + underscores).", "error");
-      return;
+    const body = String(formData.body_text || '').trim();
+    if (!body) {
+      errors.push('Message body is required.');
+    } else if (body.length > TEMPLATE_LIMITS.bodyMax) {
+      errors.push(`Message body must be at most ${TEMPLATE_LIMITS.bodyMax} characters (currently ${body.length}).`);
+    }
+
+    if (formData.header_type === 'TEXT') {
+      const headerText = String(formData.header_text || '').trim();
+      if (!headerText) {
+        errors.push('Header text is required when the header type is TEXT.');
+      } else if (headerText.length > TEMPLATE_LIMITS.headerTextMax) {
+        errors.push(`Header text must be at most ${TEMPLATE_LIMITS.headerTextMax} characters.`);
+      } else if (extractBodyVariables(headerText).length) {
+        errors.push('Header text cannot contain {{variables}}.');
+      }
     }
 
     if (formData.header_type === 'IMAGE' && !selectedFile && !formData.header_image_url) {
-      showToast("Please select an Image file for your Header Image template.", "error");
+      errors.push('Select an image for the IMAGE header, or switch the header to Text/None.');
+    }
+
+    if (String(formData.footer_text || '').length > TEMPLATE_LIMITS.footerMax) {
+      errors.push(`Footer must be at most ${TEMPLATE_LIMITS.footerMax} characters.`);
+    }
+
+    const variables = extractBodyVariables(body);
+    const missing = variables.filter((_, idx) => !String(formData.sample_values?.[idx] || '').trim());
+    if (missing.length) {
+      errors.push(
+        `Add a sample value for ${missing.map((key) => `{{${key}}}`).join(', ')} — Meta requires an example for every variable.`
+      );
+    }
+
+    formData.buttons.forEach((btn, idx) => {
+      if (!String(btn.text || '').trim()) errors.push(`Button ${idx + 1} needs display text.`);
+      if (String(btn.text || '').length > TEMPLATE_LIMITS.buttonTextMax) {
+        errors.push(`Button ${idx + 1} text must be at most ${TEMPLATE_LIMITS.buttonTextMax} characters.`);
+      }
+      if (btn.type === 'URL' && !String(btn.url || '').trim()) {
+        errors.push(`Button ${idx + 1} needs a website URL.`);
+      }
+      if ((btn.type === 'PHONE_NUMBER' || btn.type === 'WHATSAPP_CALL')
+        && String(btn.phone_number || '').replace(/\D/g, '').length < 8) {
+        errors.push(`Button ${idx + 1} needs a full phone number with country code.`);
+      }
+    });
+
+    // Meta: up to 10 buttons in total, at most 2 URL and 1 phone-number button.
+    if (formData.buttons.length > TEMPLATE_LIMITS.maxButtonsTotal) {
+      errors.push(`Up to ${TEMPLATE_LIMITS.maxButtonsTotal} buttons are allowed per template.`);
+    }
+    const urlButtons = formData.buttons.filter((btn) => btn.type === 'URL').length;
+    if (urlButtons > TEMPLATE_LIMITS.urlButtonMax) {
+      errors.push(`Up to ${TEMPLATE_LIMITS.urlButtonMax} website-link buttons are allowed.`);
+    }
+    const phoneButtons = formData.buttons.filter(
+      (btn) => btn.type === 'PHONE_NUMBER' || btn.type === 'WHATSAPP_CALL'
+    ).length;
+    if (phoneButtons > TEMPLATE_LIMITS.phoneButtonMax) {
+      errors.push('Only one phone-number button is allowed per template.');
+    }
+
+    return errors;
+  };
+
+  /** Studio form -> backend payload. The backend owns the Meta component shape. */
+  const buildTemplatePayload = () => {
+    const isAuth = formData.category === 'AUTHENTICATION';
+    return {
+      name: slugifyTemplateName(formData.name),
+      category: formData.category,
+      language: formData.language || 'en',
+      header_type: isAuth ? 'NONE' : (formData.header_type || 'NONE'),
+      header_text: isAuth ? '' : (formData.header_text || ''),
+      // A data: URL is only a local preview — the real file travels as `media`.
+      header_image_url: String(formData.header_image_url || '').startsWith('data:')
+        ? ''
+        : (formData.header_image_url || ''),
+      body_text: isAuth ? '' : (formData.body_text || ''),
+      footer_text: isAuth ? '' : (formData.footer_text || ''),
+      sample_values: isAuth ? [] : (formData.sample_values || []),
+      buttons: isAuth ? [{ type: 'OTP' }] : formData.buttons,
+      code_expiration_minutes: formData.code_expiration_minutes ?? 10,
+    };
+  };
+
+  const postTemplate = async (payload, { recreate = false } = {}) => {
+    const base = getApiBase();
+    const url = editingTemplateId
+      ? `${base}/api/template/${editingTemplateId}${recreate ? '/recreate' : ''}`
+      : `${base}/api/template/meta`;
+    const method = editingTemplateId && !recreate ? 'PUT' : 'POST';
+    const body = recreate ? { ...payload, recreate: true } : payload;
+
+    let requestInit;
+    if (selectedFile) {
+      const form = new FormData();
+      form.append('media', selectedFile);
+      Object.entries(body).forEach(([key, value]) => {
+        if (value === undefined || value === null) return;
+        form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+      });
+      requestInit = { method, body: form };
+    } else {
+      requestInit = {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      };
+    }
+
+    const res = await fetch(url, requestInit);
+    const data = await res.json().catch(() => ({}));
+
+    // Meta cannot edit a submitted template — offer to recreate it instead.
+    if (res.status === 409 && data.requiresRecreate) {
+      setSubmitting(false);
+      setConfirmModal({
+        isOpen: true,
+        title: 'Recreate this template?',
+        message: `${data.message} The current version is removed from Meta and the edited copy is submitted for review.`,
+        type: 'warning',
+        confirmText: 'Yes, recreate',
+        cancelText: 'Keep current',
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          setSubmitting(true);
+          postTemplate(payload, { recreate: true }).catch((err) => {
+            setSubmitError({ message: err.message || 'Recreate failed.' });
+            showToast(err.message || 'Recreate failed.', 'error');
+            setSubmitting(false);
+          });
+        },
+      });
+      return;
+    }
+
+    if (!res.ok || !(data.success || data.template)) {
+      const metaError = data.metaError || null;
+      setSubmitError({
+        message: metaError?.message || data.message || 'Failed to submit the template.',
+        code: metaError?.code ?? null,
+        subcode: metaError?.subcode ?? null,
+        fbtraceId: metaError?.fbtraceId ?? null,
+        details: metaError?.details ?? null,
+        hint: metaError?.hint ?? null,
+        validationErrors: data.validationErrors || [],
+      });
+      showToast(metaError?.message || data.message || 'Failed to submit the template.', 'error');
+      setSubmitting(false);
+      return;
+    }
+
+    setSubmitError(null);
+    showToast(data.message || `Template '${payload.name}' saved on Meta!`, 'success');
+    (data.warnings || []).forEach((warning) => showToast(warning.message || String(warning), 'info'));
+    setShowCreateModal(false);
+    setSelectedFile(null);
+    setEditingTemplateId(null);
+    setEditingOnMeta(false);
+    setSubmitting(false);
+    await fetchTemplates();
+  };
+
+  // Real-time API: Create or Update template directly on the WhatsApp Cloud API
+  const handleCreateTemplate = async (e) => {
+    e.preventDefault();
+    if (submitting) return;
+
+    const errors = validateTemplateForm();
+    if (errors.length) {
+      setSubmitError({ message: errors[0], validationErrors: errors });
+      showToast(errors[0], 'error');
       return;
     }
 
     setSubmitting(true);
-    const components = buildMetaComponents(formData);
+    setSubmitError(null);
 
-    const endpoints = editingTemplateId
-      ? [
-          `${getApiBase()}/api/integrations/whatsapp/templates/${editingTemplateId}`,
-          `${getApiBase()}/api/template/${editingTemplateId}`
-        ]
-      : [
-          `${getApiBase()}/api/integrations/whatsapp/templates/meta`,
-          `${getApiBase()}/api/integrations/whatsapp/templates`,
-          `${getApiBase()}/api/template/meta`,
-          `${getApiBase()}/api/template`
-        ];
-
-    let lastError = null;
-    let successResult = null;
-
-    for (const url of endpoints) {
-      try {
-        let options;
-        const httpMethod = editingTemplateId ? 'PUT' : 'POST';
-        if (selectedFile) {
-          const bodyData = new FormData();
-          bodyData.append('media', selectedFile);
-          bodyData.append('name', formattedName);
-          bodyData.append('category', formData.category || 'MARKETING');
-          bodyData.append('language', formData.language || 'en');
-          bodyData.append('header_type', formData.header_type || 'IMAGE');
-          bodyData.append('header_text', formData.header_text || '');
-          bodyData.append('body_text', formData.body_text || '');
-          bodyData.append('footer_text', formData.footer_text || '');
-          bodyData.append('message', formData.body_text || '');
-          bodyData.append('components', JSON.stringify(components));
-          options = {
-            method: httpMethod,
-            body: bodyData
-          };
-        } else {
-          options = {
-            method: httpMethod,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...formData, message: formData.body_text, name: formattedName, components })
-          };
-        }
-
-        const res = await fetch(url, options);
-
-        if (res.status === 404) {
-          continue;
-        }
-
-        const result = await res.json();
-        if (res.ok && (result.success || result.template)) {
-          successResult = result;
-          break;
-        } else {
-          lastError = new Error(result.message || result.detail || "Failed to process template on Meta Cloud API.");
-          break;
-        }
-      } catch (err) {
-        lastError = err;
-      }
+    try {
+      await postTemplate(buildTemplatePayload());
+    } catch (err) {
+      setSubmitError({ message: err.message || 'Network error while contacting the server.' });
+      showToast(err.message || 'Network error while contacting the server.', 'error');
+      setSubmitting(false);
     }
-
-    if (successResult) {
-      const actionText = editingTemplateId ? 'updated' : 'created';
-      showToast(successResult.message || `Template '${formattedName}' ${actionText} successfully on Meta!`, "success");
-      setShowCreateModal(false);
-      setSelectedFile(null);
-      setEditingTemplateId(null);
-      await fetchTemplates();
-    } else {
-      showToast(lastError?.message || "Failed to save template on API", "error");
-    }
-
-    setSubmitting(false);
   };
 
   // Delete Template directly via API
   const handleDeleteTemplate = (tmpl) => {
+    if (tmpl.is_auto_generated) {
+      showToast(
+        `'${tmpl.name}' was generated by Meta Direct Send — Meta does not allow deleting or editing these templates.`,
+        'error'
+      );
+      return;
+    }
     setConfirmModal({
       isOpen: true,
       title: "Delete WhatsApp Template",
@@ -912,7 +1360,14 @@ export default function WhatsappMessage() {
   };
 
   const handleEditTemplate = (tmpl) => {
-    let parsedButtons = [];
+    if (tmpl.is_auto_generated) {
+      showToast(
+        `'${tmpl.name}' was generated by Meta Direct Send — Meta does not allow editing or deleting these templates.`,
+        'error'
+      );
+      return;
+    }
+    let parsedButtons;
     try {
       parsedButtons = typeof tmpl.buttons === 'string' ? JSON.parse(tmpl.buttons) : (tmpl.buttons || []);
     } catch (e) {
@@ -922,34 +1377,82 @@ export default function WhatsappMessage() {
     const headerComp = tmpl.components?.find(c => c.type === 'HEADER');
     const bodyComp = tmpl.components?.find(c => c.type === 'BODY');
     const footerComp = tmpl.components?.find(c => c.type === 'FOOTER');
+    const buttonsComp = tmpl.components?.find(c => c.type === 'BUTTONS');
+
+    if ((!parsedButtons || parsedButtons.length === 0) && buttonsComp?.buttons) {
+      parsedButtons = buttonsComp.buttons;
+    }
+
+    // The studio only edits TEXT/IMAGE headers; anything else falls back to IMAGE.
+    const rawHeaderType = headerComp?.format || tmpl.header_type || 'NONE';
+    const headerType = ['NONE', 'TEXT', 'IMAGE'].includes(rawHeaderType) ? rawHeaderType : 'IMAGE';
+
+    const bodyText = bodyComp?.text || tmpl.body_text || tmpl.message || '';
+    const storedSamples = Array.isArray(tmpl.sample_values) && tmpl.sample_values.length
+      ? tmpl.sample_values
+      : (bodyComp?.example?.body_text?.[0] || []);
+    const variables = extractBodyVariables(bodyText);
 
     setEditingTemplateId(tmpl._id || tmpl.metaTemplateId || tmpl.name);
+    setEditingOnMeta(Boolean(tmpl.meta_template_id || tmpl.metaTemplateId) && tmpl.status !== 'DRAFT');
+    setSelectedFile(null);
+    setSubmitError(null);
     setFormData({
       name: tmpl.name,
       category: tmpl.category || 'MARKETING',
       language: tmpl.language || 'en',
-      header_type: headerComp ? headerComp.format : (tmpl.header_type || 'NONE'),
+      header_type: headerType,
       header_text: headerComp?.text || tmpl.header_text || '',
       header_image_url: tmpl.imageUrl || tmpl.header_image_url || '',
-      body_text: bodyComp?.text || tmpl.body_text || tmpl.message || '',
+      body_text: bodyText,
       footer_text: footerComp?.text || tmpl.footer_text || tmpl.footer || '',
-      buttons: parsedButtons
+      sample_values: variables.map((key, idx) => storedSamples[idx] || defaultSampleFor(key, idx)),
+      buttons: parsedButtons.map((btn) => ({
+        type: btn.type,
+        text: btn.text || '',
+        url: btn.url || '',
+        phone_number: btn.phone_number || '',
+        contact_name: btn.contact_name || '',
+      })),
+      code_expiration_minutes: tmpl.code_expiration_minutes ?? 10,
     });
     setShowCreateModal(true);
   };
 
-  // Button types configuration
+  // Variables currently present in the body, used by the sample-values editor.
+  const bodyVariables = extractBodyVariables(formData.body_text);
+  const isAuthentication = formData.category === 'AUTHENTICATION';
+  const promoWarning = !isAuthentication && formData.category === 'UTILITY' && looksPromotional(formData.body_text);
+
+  // Button types configuration (CUSTOM is the legacy alias for QUICK_REPLY)
   const buttonTypeOptions = [
     { type: 'PHONE_NUMBER', label: 'Call Phone Number', icon: Phone, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
     { type: 'WHATSAPP_CALL', label: 'Call on WhatsApp', icon: WhatsApp, color: 'text-emerald-700 bg-emerald-100/70 border-emerald-300' },
     { type: 'CONTACT', label: 'Share Contact Info', icon: UserCheck, color: 'text-amber-700 bg-amber-50 border-amber-200' },
-    { type: 'CUSTOM', label: 'Custom', icon: Send, color: 'text-purple-700 bg-purple-50 border-purple-200' },
+    { type: 'QUICK_REPLY', label: 'Quick Reply', icon: Send, color: 'text-purple-700 bg-purple-50 border-purple-200' },
     { type: 'URL', label: 'Website Link', icon: ExternalLink, color: 'text-sky-700 bg-sky-50 border-sky-200' }
   ];
 
+  const isQuickReply = (type) => type === 'QUICK_REPLY' || type === 'CUSTOM';
+
+  const buttonOptionFor = (type) =>
+    buttonTypeOptions.find((opt) => opt.type === type)
+    || buttonTypeOptions.find((opt) => isQuickReply(opt.type) && isQuickReply(type))
+    || buttonTypeOptions[0];
+
   const addButton = (type) => {
-    if (formData.buttons.length >= 3) {
-      showToast("Meta allows maximum 3 interactive buttons per message template.", "info");
+    if (formData.buttons.length >= TEMPLATE_LIMITS.maxButtonsTotal) {
+      showToast(`Meta allows maximum ${TEMPLATE_LIMITS.maxButtonsTotal} buttons per message template.`, "info");
+      return;
+    }
+    if (type === 'URL'
+      && formData.buttons.filter((btn) => btn.type === 'URL').length >= TEMPLATE_LIMITS.urlButtonMax) {
+      showToast(`Up to ${TEMPLATE_LIMITS.urlButtonMax} website-link buttons are allowed.`, "info");
+      return;
+    }
+    if ((type === 'PHONE_NUMBER' || type === 'WHATSAPP_CALL')
+      && formData.buttons.some((btn) => btn.type === 'PHONE_NUMBER' || btn.type === 'WHATSAPP_CALL')) {
+      showToast('Only one phone-number button is allowed per template.', "info");
       return;
     }
 
@@ -962,7 +1465,7 @@ export default function WhatsappMessage() {
     if (type === 'WHATSAPP_CALL') defaultText = 'Call on WhatsApp';
     if (type === 'CONTACT') defaultText = 'Share Contact Info';
     if (type === 'URL') { defaultText = 'Visit Website'; defaultUrl = 'https://aotms.com'; }
-    if (type === 'CUSTOM') defaultText = 'Yes, I am Interested';
+    if (type === 'QUICK_REPLY' || type === 'CUSTOM') defaultText = 'Yes, I am Interested';
 
     setFormData(prev => ({
       ...prev,
@@ -1604,6 +2107,218 @@ export default function WhatsappMessage() {
                     </div>
                   )}
 
+                  {/* Meta Direct Send options (utility / authentication, no template needed) */}
+                  {directSendMode && (
+                    <div className="mb-2 rounded-2xl border border-amber-300 bg-amber-50/80 p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-[11px] font-black text-amber-900">Meta Direct Send — send without an approved template</p>
+                          <p className="text-[10.5px] leading-relaxed text-amber-800/90 mt-0.5">
+                            Utility and authentication only — <span className="font-bold">marketing is not supported</span>.
+                            Your Messaging account must be enabled for Direct Send, otherwise Meta returns error 100.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDirectSendMode(false)}
+                          className="p-1 rounded-lg text-amber-700 hover:bg-amber-200/60 cursor-pointer shrink-0"
+                          title="Turn off Direct Send"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <label className="block">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wide text-amber-900">Category</span>
+                          <select
+                            value={dsCategory}
+                            onChange={(e) => setDsCategory(e.target.value)}
+                            className="mt-1 w-full px-2.5 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                          >
+                            <option value="utility">Utility</option>
+                            <option value="authentication">Authentication (alpha)</option>
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wide text-amber-900">Template name (optional)</span>
+                          <input
+                            type="text"
+                            value={dsTemplateName}
+                            onChange={(e) => setDsTemplateName(e.target.value)}
+                            placeholder="order_shipment_update"
+                            disabled={dsCategory !== 'utility'}
+                            className="mt-1 w-full px-2.5 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] font-mono text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500 disabled:opacity-50"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wide text-amber-900">TTL minutes (optional)</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max={TEMPLATE_LIMITS.directSendTtlMinutesMax}
+                            value={dsTtlMinutes}
+                            onChange={(e) => setDsTtlMinutes(e.target.value)}
+                            placeholder="1440"
+                            className="mt-1 w-full px-2.5 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] font-bold text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500"
+                          />
+                        </label>
+                      </div>
+                      {/* Header: text or media (image / video / document) */}
+                      <div className="rounded-xl border border-amber-200 bg-white/70 p-2.5 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wide text-amber-900">Header</span>
+                          <span className="text-[9.5px] font-medium text-amber-700">
+                            {dsHeaderType === 'none'
+                              ? 'No header'
+                              : 'Headers need at least one button'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <label className="block">
+                            <span className="text-[9.5px] font-bold text-amber-800">Type</span>
+                            <select
+                              value={dsHeaderType}
+                              onChange={(e) => setDsHeaderType(e.target.value)}
+                              className="mt-1 w-full px-2 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                            >
+                              <option value="none">None</option>
+                              <option value="text">Text</option>
+                              <option value="image">Image</option>
+                              <option value="video">Video</option>
+                              <option value="document">Document</option>
+                            </select>
+                          </label>
+                          {dsHeaderType === 'text' && (
+                            <label className="block sm:col-span-2">
+                              <span className="text-[9.5px] font-bold text-amber-800">
+                                Header text ({dsHeaderText.length}/{TEMPLATE_LIMITS.directSendHeaderTextMax})
+                              </span>
+                              <input
+                                type="text"
+                                value={dsHeaderText}
+                                maxLength={TEMPLATE_LIMITS.directSendHeaderTextMax}
+                                onChange={(e) => setDsHeaderText(e.target.value)}
+                                placeholder="Order update"
+                                className="mt-1 w-full px-2 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500"
+                              />
+                            </label>
+                          )}
+                          {['image', 'video', 'document'].includes(dsHeaderType) && (
+                            <label className="block sm:col-span-2">
+                              <span className="text-[9.5px] font-bold text-amber-800">Public link</span>
+                              <input
+                                type="url"
+                                value={dsHeaderLink}
+                                onChange={(e) => setDsHeaderLink(e.target.value)}
+                                placeholder="https://cdn.example.com/file.jpg"
+                                className="mt-1 w-full px-2 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500"
+                              />
+                            </label>
+                          )}
+                          {['image', 'video', 'document'].includes(dsHeaderType) && (
+                            <label className="block">
+                              <span className="text-[9.5px] font-bold text-amber-800">or media ID</span>
+                              <input
+                                type="text"
+                                value={dsHeaderId}
+                                onChange={(e) => setDsHeaderId(e.target.value)}
+                                placeholder="1234567890"
+                                className="mt-1 w-full px-2 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] font-mono text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500"
+                              />
+                            </label>
+                          )}
+                          {dsHeaderType === 'document' && (
+                            <label className="block sm:col-span-3">
+                              <span className="text-[9.5px] font-bold text-amber-800">Filename (optional)</span>
+                              <input
+                                type="text"
+                                value={dsHeaderFilename}
+                                onChange={(e) => setDsHeaderFilename(e.target.value)}
+                                placeholder="invoice.pdf"
+                                className="mt-1 w-full px-2 py-1.5 rounded-lg bg-white border border-amber-300 text-[11px] text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500"
+                              />
+                            </label>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Buttons: up to 3 replies, or a single CTA link */}
+                      <div className="rounded-xl border border-amber-200 bg-white/70 p-2.5 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wide text-amber-900">
+                            Buttons ({dsButtons.length}/{TEMPLATE_LIMITS.directSendQuickReplyMax})
+                          </span>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => addDsButton('reply')}
+                              disabled={dsButtons.length >= TEMPLATE_LIMITS.directSendQuickReplyMax
+                                || dsButtons.some((btn) => btn.type === 'cta_url')}
+                              className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-extrabold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              + Reply
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => addDsButton('cta_url')}
+                              disabled={dsButtons.length > 0}
+                              className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-extrabold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              + Link
+                            </button>
+                          </div>
+                        </div>
+                        {dsButtons.length === 0 ? (
+                          <p className="text-[10px] leading-relaxed text-amber-700">
+                            Optional. No buttons sends a plain text message. Reply buttons let the customer tap an answer;
+                            a single Link button opens a URL.
+                          </p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {dsButtons.map((btn, idx) => (
+                              <div key={idx} className="flex items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[9px] font-mono font-bold shrink-0">
+                                  {btn.type === 'cta_url' ? 'CTA' : `R${idx + 1}`}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={btn.text}
+                                  maxLength={TEMPLATE_LIMITS.buttonTextMax}
+                                  onChange={(e) => updateDsButton(idx, { text: e.target.value })}
+                                  placeholder="Button label"
+                                  className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-amber-300 text-[11px] text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500"
+                                />
+                                {btn.type === 'cta_url' && (
+                                  <input
+                                    type="url"
+                                    value={btn.url}
+                                    onChange={(e) => updateDsButton(idx, { url: e.target.value })}
+                                    placeholder="https://example.com"
+                                    className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-amber-300 text-[11px] text-slate-800 placeholder-amber-400 focus:outline-none focus:border-amber-500"
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => removeDsButton(idx)}
+                                  className="p-1 rounded-lg text-amber-700 hover:bg-amber-200/60 cursor-pointer shrink-0"
+                                  title="Remove button"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <p className="text-[10px] font-medium text-amber-700">
+                        {chatMessageText.length}/{TEMPLATE_LIMITS.directSendBodyMax} body characters
+                        {dsHeaderType === 'text' && ` • header ${dsHeaderText.length}/${TEMPLATE_LIMITS.directSendHeaderTextMax}`}
+                        {dsCategory === 'authentication' && ' • Authentication Direct Send is access-restricted'}
+                      </p>
+                    </div>
+                  )}
+
                   {/* Direct Text Message Form */}
                   <form onSubmit={handleSendDirectChatMessage} className="flex items-center gap-2">
                     {/* Small Select Template Button */}
@@ -1621,9 +2336,29 @@ export default function WhatsappMessage() {
                       <span className="hidden sm:inline">Templates</span>
                     </button>
 
+                    {/* Direct Send toggle — business-initiated message, no template */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDirectSendMode(v => !v);
+                        setShowTemplatePicker(false);
+                      }}
+                      className={`px-3 py-2.5 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 shadow-2xs ${
+                        directSendMode
+                          ? 'bg-amber-500 text-white border-amber-500'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                      title="Send a business-initiated utility message without an approved template (Meta Direct Send)"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span className="hidden sm:inline">Direct</span>
+                    </button>
+
                     <input
                       type="text"
-                      placeholder={`Type a WhatsApp message to ${selectedContact.name || selectedContact.phone}...`}
+                      placeholder={directSendMode
+                        ? `Direct Send ${dsCategory} message...`
+                        : `Type a WhatsApp message to ${selectedContact.name || selectedContact.phone}...`}
                       value={chatMessageText}
                       onChange={(e) => setChatMessageText(e.target.value)}
                       disabled={sendingChatMsg}
@@ -1636,7 +2371,7 @@ export default function WhatsappMessage() {
                       className="px-5 py-2.5 rounded-xl bg-[#00a884] hover:bg-emerald-600 text-white font-black text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-40"
                     >
                       {sendingChatMsg ? <RotateCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      <span>Send</span>
+                      <span>{directSendMode ? 'Direct' : 'Send'}</span>
                     </button>
                   </form>
 
@@ -1715,7 +2450,7 @@ export default function WhatsappMessage() {
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {paginatedTemplates.map((tmpl) => {
-                  let parsedButtons = [];
+                  let parsedButtons;
                   try {
                     parsedButtons = typeof tmpl.buttons === 'string' ? JSON.parse(tmpl.buttons) : (tmpl.buttons || []);
                   } catch (e) {
@@ -1738,13 +2473,26 @@ export default function WhatsappMessage() {
                             <h3 className="text-sm font-black text-slate-900 group-hover:text-emerald-700 transition-colors mt-1 truncate max-w-[200px]">
                               {tmpl.name}
                             </h3>
+                            {tmpl.is_auto_generated && (
+                              <span
+                                className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200"
+                                title="Generated by Meta Direct Send — cannot be edited or deleted"
+                              >
+                                <Sparkles className="w-2.5 h-2.5" />
+                                <span>Direct Send</span>
+                              </span>
+                            )}
                           </div>
 
                           {/* Live Meta Status Selector */}
                           <select
                             value={tmpl.status || 'APPROVED'}
                             onChange={(e) => handleUpdateStatus(tmpl, e.target.value)}
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold cursor-pointer border focus:outline-none transition-all shadow-2xs ${
+                            disabled={tmpl.is_auto_generated}
+                            title={tmpl.is_auto_generated ? 'Meta manages the status of Direct Send templates' : 'Meta status'}
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border focus:outline-none transition-all shadow-2xs ${
+                              tmpl.is_auto_generated ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+                            } ${
                               tmpl.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' :
                               tmpl.status === 'PENDING' ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' :
                               tmpl.status === 'REJECTED' ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100' :
@@ -1833,8 +2581,13 @@ export default function WhatsappMessage() {
                           <button
                             type="button"
                             onClick={() => handleEditTemplate(tmpl)}
-                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-sky-100 text-slate-600 hover:text-sky-700 border border-slate-200 transition-colors cursor-pointer"
-                            title="Edit Template"
+                            disabled={tmpl.is_auto_generated}
+                            className={`p-1.5 rounded-xl border transition-colors ${
+                              tmpl.is_auto_generated
+                                ? 'bg-slate-50 text-slate-300 border-slate-200 cursor-not-allowed'
+                                : 'bg-slate-100 hover:bg-sky-100 text-slate-600 hover:text-sky-700 border-slate-200 cursor-pointer'
+                            }`}
+                            title={tmpl.is_auto_generated ? 'Direct Send templates cannot be edited' : 'Edit Template'}
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
@@ -1842,8 +2595,13 @@ export default function WhatsappMessage() {
                           <button
                             type="button"
                             onClick={() => handleDeleteTemplate(tmpl)}
-                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-slate-200 transition-colors cursor-pointer"
-                            title="Delete Template"
+                            disabled={tmpl.is_auto_generated}
+                            className={`p-1.5 rounded-xl border transition-colors ${
+                              tmpl.is_auto_generated
+                                ? 'bg-slate-50 text-slate-300 border-slate-200 cursor-not-allowed'
+                                : 'bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border-slate-200 cursor-pointer'
+                            }`}
+                            title={tmpl.is_auto_generated ? 'Direct Send templates cannot be deleted' : 'Delete Template'}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1908,10 +2666,10 @@ export default function WhatsappMessage() {
                 </div>
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900">
-                    Create Message Template & Actions Studio
+                    {editingTemplateId ? 'Edit Message Template' : 'Create Message Template'} & Actions Studio
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Upload local images, configure action buttons (Call Phone Number, Call on WhatsApp, Share Contact Info, Custom), and preview live.
+                    Pick a category, write copy with variables, upload a header image and preview the exact WhatsApp message before submitting.
                   </p>
                 </div>
               </div>
@@ -1936,32 +2694,57 @@ export default function WhatsappMessage() {
                   <label className="block text-xs font-bold text-slate-800 mb-1.5">
                     1. Template Category <span className="text-rose-500">*</span>
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, category: 'MARKETING' })}
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                        formData.category === 'MARKETING'
-                          ? 'bg-purple-50/60 border-purple-500 ring-2 ring-purple-500/20 text-purple-900'
-                          : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
-                      }`}
-                    >
-                      <div className="text-xs font-extrabold">Marketing</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">Offers, welcome deals, product launches</div>
-                    </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {[
+                      { id: 'MARKETING', accent: 'purple', tagline: 'Offers, launches, re-engagement' },
+                      { id: 'UTILITY', accent: 'teal', tagline: 'Orders, delivery, account alerts' },
+                      { id: 'AUTHENTICATION', accent: 'amber', tagline: 'One-time passcodes' },
+                    ].map((option) => {
+                      const active = formData.category === option.id;
+                      const preset = categoryPresets[option.id] || {};
+                      const theme = {
+                        purple: 'bg-purple-50/60 border-purple-500 ring-2 ring-purple-500/20 text-purple-900',
+                        teal: 'bg-teal-50/60 border-teal-500 ring-2 ring-teal-500/20 text-teal-900',
+                        amber: 'bg-amber-50/60 border-amber-500 ring-2 ring-amber-500/20 text-amber-900',
+                      }[option.accent];
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => applyCategoryPreset(option.id)}
+                          className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                            active ? theme : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
+                          }`}
+                        >
+                          <div className="text-xs font-extrabold">{preset.label || option.id}</div>
+                          <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                            {option.tagline}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, category: 'UTILITY' })}
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                        formData.category === 'UTILITY'
-                          ? 'bg-teal-50/60 border-teal-500 ring-2 ring-teal-500/20 text-teal-900'
-                          : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
-                      }`}
-                    >
-                      <div className="text-xs font-extrabold">Utility</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">Order receipts, transactional alerts, OTP</div>
-                    </button>
+                  <div className="mt-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+                    {formData.category === 'MARKETING' && (
+                      <span>
+                        Promotional content. Meta requires opt-in and lets recipients stop promotions —
+                        include an opt-out hint in the footer.
+                      </span>
+                    )}
+                    {formData.category === 'UTILITY' && (
+                      <span>
+                        Must describe a specific transaction (order, payment, delivery, account).
+                        Words like <em>offer</em>, <em>discount</em> or <em>sale</em> usually get the template re-classified
+                        or rejected — use Marketing for those.
+                      </span>
+                    )}
+                    {formData.category === 'AUTHENTICATION' && (
+                      <span>
+                        Meta writes the message body for you and adds a <strong>Copy code</strong> button.
+                        You only choose the code expiry — no header, body, footer or custom buttons.
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -2000,6 +2783,8 @@ export default function WhatsappMessage() {
                 </div>
 
                 {/* 3. Header Media Type & Image */}
+                {!isAuthentication && (
+                <>
                 <div className="space-y-3 p-4 rounded-2xl bg-slate-50/70 border border-slate-200">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold text-slate-800">
@@ -2038,7 +2823,9 @@ export default function WhatsappMessage() {
                       <input 
                         ref={fileInputRef}
                         type="file" 
-                        accept="image/png,image/jpeg,image/jpg,image/webp" 
+                        accept={formData.category === 'MARKETING'
+                          ? 'image/png,image/jpeg,image/jpg,image/webp,image/gif'
+                          : 'image/png,image/jpeg,image/jpg,image/webp'} 
                         className="hidden" 
                         onChange={handleImageFileChange}
                       />
@@ -2057,7 +2844,9 @@ export default function WhatsappMessage() {
                               Upload Header Image
                             </div>
                             <div className="text-[11px] text-slate-400 mt-0.5">
-                              Click to choose image (PNG, JPG, JPEG, WEBP)
+                              {formData.category === 'MARKETING'
+                                ? 'PNG, JPG, JPEG, WEBP — animated GIF for marketing templates'
+                                : 'Click to choose image (PNG, JPG, JPEG, WEBP)'}
                             </div>
                           </div>
                           <span className="mt-1 px-3 py-1.5 rounded-lg bg-emerald-600 group-hover:bg-emerald-700 text-white text-[11px] font-bold shadow-xs flex items-center gap-1.5 transition-colors">
@@ -2106,18 +2895,67 @@ export default function WhatsappMessage() {
                 </div>
 
                 {/* 4. Body Text */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-800">
-                    4. Message Body <span className="text-rose-500">*</span>
-                  </label>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-800">
+                      4. Message Body <span className="text-rose-500">*</span>
+                    </label>
+                    <span className={`text-[10px] font-mono font-bold ${
+                      formData.body_text.length > TEMPLATE_LIMITS.bodyMax ? 'text-rose-600' : 'text-slate-400'
+                    }`}>
+                      {formData.body_text.length}/{TEMPLATE_LIMITS.bodyMax}
+                    </span>
+                  </div>
 
                   <textarea
                     rows={4}
                     required
                     value={formData.body_text}
-                    onChange={(e) => setFormData({ ...formData, body_text: e.target.value })}
+                    onChange={(e) => handleBodyTextChange(e.target.value)}
+                    placeholder="Hi {{1}}, your order {{2}} is confirmed…"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-emerald-500 font-normal leading-relaxed"
                   />
+
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    Use <code className="font-mono">{'{{1}}'}</code> or named variables like{' '}
+                    <code className="font-mono">{'{{name}}'}</code>. Meta requires a sample value for every one.
+                  </p>
+
+                  {promoWarning && (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 leading-relaxed">
+                      This copy reads like a promotion. Meta usually rejects promotional text under{' '}
+                      <strong>Utility</strong> — switch to Marketing or rewrite it around a specific transaction.
+                    </div>
+                  )}
+
+                  {/* Variable sample values — Meta rejects templates that omit them */}
+                  {bodyVariables.length > 0 && (
+                    <div className="p-3 rounded-xl bg-white border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                          Variable samples ({bodyVariables.length})
+                        </span>
+                        <span className="text-[10px] text-slate-400">Sent to Meta as the body example</span>
+                      </div>
+                      {bodyVariables.map((key, idx) => (
+                        <div key={`${key}-${idx}`} className="flex items-center gap-2">
+                          <code className="shrink-0 px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-mono font-bold text-slate-600">
+                            {`{{${idx + 1}}}`}
+                          </code>
+                          <span className="shrink-0 text-[10px] text-slate-400 font-mono max-w-[80px] truncate" title={key}>
+                            {key}
+                          </span>
+                          <input
+                            type="text"
+                            value={formData.sample_values?.[idx] || ''}
+                            onChange={(e) => handleSampleValueChange(idx, e.target.value)}
+                            placeholder={defaultSampleFor(key, idx)}
+                            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* 5. Footer Text */}
@@ -2169,7 +3007,7 @@ export default function WhatsappMessage() {
                   {/* Buttons List Editor */}
                   <div className="space-y-2.5 pt-1">
                     {formData.buttons.map((btn, index) => {
-                      const opt = buttonTypeOptions.find(o => o.type === btn.type) || buttonTypeOptions[0];
+                      const opt = buttonOptionFor(btn.type);
                       const Icon = opt.icon;
 
                       return (
@@ -2270,6 +3108,81 @@ export default function WhatsappMessage() {
                     })}
                   </div>
                 </div>
+                </>
+                )}
+
+                {/* AUTHENTICATION: Meta owns the message content */}
+                {isAuthentication && (
+                  <div className="space-y-3 p-4 rounded-2xl bg-amber-50/60 border border-amber-200">
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
+                        <Smartphone className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-extrabold text-amber-900">Authentication template</div>
+                        <p className="text-[11px] text-amber-800/90 leading-relaxed mt-0.5">
+                          Meta fills the body with the passcode and adds a <strong>Copy code</strong> button
+                          automatically. No header, body or footer copy is needed.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                        Code expiration (minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={90}
+                        value={formData.code_expiration_minutes ?? 10}
+                        onChange={(e) => setFormData({ ...formData, code_expiration_minutes: Number(e.target.value) })}
+                        className="w-32 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Allowed range: 1–90 minutes.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Submission error — includes Meta's code / subcode / trace id */}
+                {submitError && (
+                  <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 space-y-1.5">
+                    <div className="text-xs font-extrabold text-rose-800">
+                      {submitError.message}
+                    </div>
+                    {submitError.hint && (
+                      <p className="text-[11px] text-rose-700 leading-relaxed">{submitError.hint}</p>
+                    )}
+                    {Array.isArray(submitError.validationErrors) && submitError.validationErrors.length > 1 && (
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        {submitError.validationErrors.map((item, idx) => (
+                          <li key={idx} className="text-[11px] text-rose-700 leading-relaxed">
+                            {typeof item === 'string' ? item : item.message}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(submitError.code || submitError.fbtraceId) && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        {submitError.code != null && (
+                          <span className="px-1.5 py-0.5 rounded bg-white border border-rose-200 text-[10px] font-mono font-bold text-rose-700">
+                            code {submitError.code}
+                          </span>
+                        )}
+                        {submitError.subcode != null && (
+                          <span className="px-1.5 py-0.5 rounded bg-white border border-rose-200 text-[10px] font-mono font-bold text-rose-700">
+                            subcode {submitError.subcode}
+                          </span>
+                        )}
+                        {submitError.fbtraceId && (
+                          <span className="px-1.5 py-0.5 rounded bg-white border border-rose-200 text-[10px] font-mono text-rose-600 truncate max-w-full">
+                            fbtrace {submitError.fbtraceId}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
               </form>
 
@@ -2324,9 +3237,15 @@ export default function WhatsappMessage() {
                       )}
 
                       {/* Body Text with Live Variable Replacement */}
-                      <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-line font-normal">
-                        {renderPreviewBody(formData.body_text, formData.sample_values)}
-                      </p>
+                      {isAuthentication ? (
+                        <p className="text-xs text-slate-800 leading-relaxed font-normal">
+                          123456 is your verification code. For your security, do not share this code.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-line font-normal">
+                          {renderPreviewBody(formData.body_text, formData.sample_values)}
+                        </p>
+                      )}
 
                       {/* Footer */}
                       {formData.footer_text && (
@@ -2354,8 +3273,8 @@ export default function WhatsappMessage() {
                             {btn.type === 'PHONE_NUMBER' && <Phone className="w-3.5 h-3.5 text-emerald-600" />}
                             {btn.type === 'CONTACT' && <UserCheck className="w-3.5 h-3.5 text-amber-600" />}
                             {btn.type === 'URL' && <ExternalLink className="w-3.5 h-3.5 text-sky-600" />}
-                            {btn.type === 'CUSTOM' && <Send className="w-3 h-3 text-purple-600" />}
-                            <span>{btn.text}</span>
+                            {isQuickReply(btn.type) && <Send className="w-3 h-3 text-purple-600" />}
+                            <span>{btn.type === 'OTP' ? 'Copy code' : btn.text}</span>
                           </div>
                         ))}
                       </div>
@@ -2410,7 +3329,13 @@ export default function WhatsappMessage() {
                 className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
               >
                 {submitting ? <RotateCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                <span>{submitting ? 'Saving to Meta...' : 'Create Template on Meta'}</span>
+                <span>
+                  {submitting
+                    ? 'Talking to Meta...'
+                    : editingTemplateId
+                      ? (editingOnMeta ? 'Save & Recreate on Meta' : 'Update Draft')
+                      : 'Create Template on Meta'}
+                </span>
               </button>
             </div>
 
@@ -2459,7 +3384,9 @@ export default function WhatsappMessage() {
                   </h4>
                 )}
                 <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-line font-normal">
-                  {renderPreviewBody(previewTemplate.body_text, ['Customer', 'AOTMS2026'])}
+                  {previewTemplate.category === 'AUTHENTICATION'
+                    ? '123456 is your verification code. For your security, do not share this code.'
+                    : renderPreviewBody(previewTemplate.body_text, previewTemplate.sample_values || [])}
                 </p>
                 {previewTemplate.footer_text && (
                   <p className="text-[10px] text-slate-400 font-medium">{previewTemplate.footer_text}</p>
@@ -2472,7 +3399,7 @@ export default function WhatsappMessage() {
 
               {/* Render buttons in standalone preview too */}
               {(() => {
-                let pButtons = [];
+                let pButtons;
                 try {
                   pButtons = typeof previewTemplate.buttons === 'string' ? JSON.parse(previewTemplate.buttons) : (previewTemplate.buttons || []);
                 } catch(e) { pButtons = []; }
@@ -2488,8 +3415,8 @@ export default function WhatsappMessage() {
                         {btn.type === 'PHONE_NUMBER' && <Phone className="w-3.5 h-3.5 text-emerald-600" />}
                         {btn.type === 'CONTACT' && <UserCheck className="w-3.5 h-3.5 text-amber-600" />}
                         {btn.type === 'URL' && <ExternalLink className="w-3.5 h-3.5 text-sky-600" />}
-                        {btn.type === 'CUSTOM' && <Send className="w-3 h-3 text-purple-600" />}
-                        <span>{btn.text}</span>
+                        {isQuickReply(btn.type) && <Send className="w-3 h-3 text-purple-600" />}
+                        <span>{btn.type === 'OTP' ? 'Copy code' : btn.text}</span>
                       </div>
                     ))}
                   </div>

@@ -250,6 +250,9 @@ router.post('/webhook', async (req, res) => {
         let errorCode = null;
         let errorMessage = null;
         let pricing = statusObj.pricing || null;
+        // MM API for WhatsApp reports `conversation.origin.type = "marketing_lite"`,
+        // which is how a send can be identified as an optimised marketing message.
+        const conversationOrigin = statusObj.conversation?.origin?.type || null;
         
         if (status === 'failed' && statusObj.errors && statusObj.errors.length > 0) {
           errorCode = statusObj.errors[0].code;
@@ -278,6 +281,7 @@ router.post('/webhook', async (req, res) => {
                 errorCode,
                 errorMessage,
                 pricing,
+                conversationOrigin,
                 phoneId: incomingPhoneId,
                 wabaId: incomingWabaId
               },

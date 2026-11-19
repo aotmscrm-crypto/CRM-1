@@ -5,7 +5,7 @@ const XLSX    = require('xlsx');
 const Contact = require('../models/Contact');
 const path    = require('path');
 const fs      = require('fs');
-const { sendTextMessage } = require('../utils/whatsappService');
+const { sendTextMessage, sendDirectSendMessage } = require('../utils/whatsappService');
 
 const upload = multer({ dest: path.join(__dirname, '../uploads/') });
 
@@ -167,6 +167,36 @@ router.delete('/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+// Persists an outbound message so the Live Chat view keeps it after a refetch.
+const logOutbound = async (phone, message, metaRes) => {
+  const wamid = metaRes?.messages?.[0]?.id || `direct_${Date.now()}`;
+
+  let cleanP = String(phone).replace(/\D/g, '');
+  if (cleanP.startsWith('91') && cleanP.length === 12) cleanP = cleanP.slice(2);
+
+  try {
+    const MessageLog = require('../models/MessageLog');
+    await MessageLog.findOneAndUpdate(
+      { wamid },
+      {
+        $set: {
+          wamid,
+          phone: cleanP,
+          direction: 'OUTGOING',
+          status: 'sent',
+          text: message,
+          timestamp: new Date()
+        }
+      },
+      { upsert: true, new: true }
+    );
+  } catch (logErr) {
+    console.error('Failed to log outbound direct message to MessageLog:', logErr);
+  }
+
+  return wamid;
+};
+
 // Send manual WhatsApp message
 // POST /api/contacts/send-message  { phone, message }
 router.post('/send-message', async (req, res) => {
@@ -174,34 +204,45 @@ router.post('/send-message', async (req, res) => {
   if (!phone || !message) return res.status(400).json({ success: false, message: 'phone and message required' });
   try {
     const metaRes = await sendTextMessage(phone, message);
-    const wamid = metaRes?.messages?.[0]?.id || `direct_${Date.now()}`;
-
-    let cleanP = String(phone).replace(/\D/g, '');
-    if (cleanP.startsWith('91') && cleanP.length === 12) cleanP = cleanP.slice(2);
-
-    try {
-      const MessageLog = require('../models/MessageLog');
-      await MessageLog.findOneAndUpdate(
-        { wamid },
-        {
-          $set: {
-            wamid,
-            phone: cleanP,
-            direction: 'OUTGOING',
-            status: 'sent',
-            text: message,
-            timestamp: new Date()
-          }
-        },
-        { upsert: true, new: true }
-      );
-    } catch (logErr) {
-      console.error('Failed to log outbound direct message to MessageLog:', logErr);
-    }
-
+    await logOutbound(phone, message, metaRes);
     res.json({ success: true, message: 'Message sent!', metaRes });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Business-initiated message without an approved template (Meta Direct Send).
+// POST /api/contacts/send-direct
+//   { phone, message, category, templateName, ttlSeconds, header, buttons }
+router.post('/send-direct', async (req, res) => {
+  const { phone, message, category, templateName, ttlSeconds, header, buttons } = req.body || {};
+  if (!phone || !String(message || '').trim()) {
+    return res.status(400).json({ success: false, message: 'phone and message required' });
+  }
+  try {
+    const metaRes = await sendDirectSendMessage(phone, message, {
+      category,
+      templateName,
+      ttlSeconds: ttlSeconds === '' || ttlSeconds === undefined ? null : ttlSeconds,
+      header: header || null,
+      buttons: Array.isArray(buttons) ? buttons : [],
+    });
+    await logOutbound(phone, message, metaRes);
+    res.json({
+      success: true,
+      message: 'Direct Send message accepted by Meta.',
+      metaRes,
+      warnings: metaRes?.directSendWarnings || [],
+    });
+  } catch (err) {
+    const { formatMetaError } = require('../utils/templateBuilder');
+    const metaError = formatMetaError(err);
+    res.status(err.status || 400).json({
+      success: false,
+      message: metaError.message || err.message,
+      metaError,
+      validationErrors: err.validationErrors || [],
+    });
   }
 });
 

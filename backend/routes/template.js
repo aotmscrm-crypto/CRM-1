@@ -2,13 +2,32 @@ const express  = require('express');
 const router   = express.Router();
 const multer   = require('multer');
 const path     = require('path');
+const os       = require('os');
+const axios    = require('axios');
+const mime     = require('mime-types');
 const Template = require('../models/Template');
 const Contact  = require('../models/Contact');
-const { getClient, initWhatsApp, getStatus } = require('../utils/whatsappService');
 const { ConversationFlow } = require('../utils/conversationFlow');
-const { createTemplateOnMeta, getTemplateStatusFromMeta, uploadMediaToMeta, fetchAllTemplatesFromMeta } = require('../utils/metaTemplateService');
+const {
+  createTemplateOnMeta,
+  deleteTemplateOnMeta,
+  getTemplateStatusFromMeta,
+  uploadMediaToMeta,
+  uploadMediaForSending,
+  fetchAllTemplatesFromMeta,
+} = require('../utils/metaTemplateService');
 const { uploadToCloudinary, uploadUrlToCloudinary } = require('../utils/cloudinaryService');
 const { getMetaCredentials } = require('../utils/metaConfigHelper');
+const {
+  CATEGORIES,
+  CATEGORY_PRESETS,
+  RULES,
+  MEDIA_HEADER_FORMATS,
+  toDefinition,
+  buildComponents,
+  assertValidDefinition,
+  formatMetaError,
+} = require('../utils/templateBuilder');
 
 const storage = multer.diskStorage({
   destination: path.join(__dirname, '../uploads/campaigns/'),
@@ -26,6 +45,276 @@ const sendDelay = (base = 4000) => {
   const jitter = Math.floor(Math.random() * 2000) - 1000;
   return sleep(Math.max(2500, base + jitter));
 };
+
+// ── Header media resolution ───────────────────────────────────────────────────
+// Meta only accepts a Resumable Upload handle (`4::...`) as `header_handle`.
+// A media id from /{phoneId}/media is NOT valid there, so every media header
+// has to go through /app/uploads before the template submission.
+const REMOTE_MEDIA_MAX_BYTES = 16 * 1024 * 1024;
+
+const downloadToTempFile = async (url) => {
+  const response = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 30000,
+    maxContentLength: REMOTE_MEDIA_MAX_BYTES,
+    maxBodyLength: REMOTE_MEDIA_MAX_BYTES,
+  });
+
+  const contentType = response.headers['content-type'] || mime.lookup(url) || 'image/jpeg';
+  const ext = mime.extension(contentType) ? `.${mime.extension(contentType)}` : path.extname(new URL(url).pathname) || '.jpg';
+  const filePath = path.join(os.tmpdir(), `wa-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+  fs.writeFileSync(filePath, Buffer.from(response.data));
+
+  return { filePath, mimeType: contentType, size: fs.statSync(filePath).size, isTemp: true };
+};
+
+/**
+ * Produces everything a media header needs:
+ *   handle      – required by Meta when creating the template
+ *   mediaId     – required later when sending the template
+ *   cloudinaryUrl – a public URL so the dashboard preview keeps working
+ *   cleanup()   – removes any temp file we created
+ */
+const resolveHeaderMedia = async (definition, file) => {
+  const media = { handle: '', mediaId: '', cloudinaryUrl: '', cleanup: () => {} };
+
+  if (definition.category === 'AUTHENTICATION') return media;
+  if (!MEDIA_HEADER_FORMATS.includes(definition.header.type)) return media;
+
+  let source = null;
+  if (file) {
+    source = { filePath: file.path, mimeType: file.mimetype, size: file.size, isTemp: false };
+  } else if (/^https?:\/\//i.test(definition.header.imageUrl)) {
+    try {
+      source = await downloadToTempFile(definition.header.imageUrl);
+      media.cleanup = () => fs.promises.unlink(source.filePath).catch(() => {});
+    } catch (err) {
+      const e = new Error(`Could not download the header ${definition.header.type.toLowerCase()}: ${err.message}`);
+      e.status = 400;
+      throw e;
+    }
+  } else if (definition.header.imageUrl.startsWith('/uploads/')) {
+    // Earlier uploads are stored as site-relative paths — read them off disk
+    // instead of trying to fetch them over the network.
+    const localPath = path.join(__dirname, '..', definition.header.imageUrl);
+    if (fs.existsSync(localPath)) {
+      source = {
+        filePath: localPath,
+        mimeType: mime.lookup(localPath) || 'image/jpeg',
+        size: fs.statSync(localPath).size,
+        isTemp: false,
+      };
+    }
+  } else if (definition.header.handle) {
+    // Legacy record that already carries a handle — let Meta decide if it is stale.
+    media.handle = definition.header.handle;
+    return media;
+  } else {
+    // Validation already flagged the missing file; nothing to upload here.
+    return media;
+  }
+
+  if (!source) return media;
+
+  // 1. Resumable upload -> the only handle Meta accepts for template creation.
+  media.handle = await uploadMediaToMeta(source.filePath, source.mimeType, source.size);
+
+  // 2. Media id so the broadcast runner can send this template later.
+  try {
+    media.mediaId = await uploadMediaForSending(source.filePath, source.mimeType);
+  } catch (err) {
+    console.error('⚠️ Template media upload (for sending) failed:', err.response?.data || err.message);
+  }
+
+  // 3. Public URL for the dashboard preview.
+  try {
+    media.cloudinaryUrl = await uploadToCloudinary(source.filePath, 'zest_eat_templates');
+  } catch (err) {
+    console.error('⚠️ Cloudinary template upload failed:', err.message);
+  }
+  if (!media.cloudinaryUrl && file) {
+    media.cloudinaryUrl = `/uploads/campaigns/${file.filename}`;
+  }
+
+  return media;
+};
+
+/**
+ * Shared create path used by POST /meta and POST /:id/recreate:
+ * normalize -> validate -> resolve media -> build components -> create on Meta.
+ */
+const submitTemplateToMeta = async (payload, file) => {
+  const definition = toDefinition(payload);
+  const warnings = assertValidDefinition(definition);
+
+  const media = await resolveHeaderMedia(definition, file);
+  try {
+    const components = buildComponents(definition, media.handle);
+    if (!components.some((c) => c.type === 'BODY')) {
+      const e = new Error('A template needs a body component.');
+      e.status = 400;
+      throw e;
+    }
+
+    const metaResponse = await createTemplateOnMeta(
+      definition.name,
+      definition.language,
+      definition.category,
+      components,
+    );
+
+    return { definition, components, media, metaResponse, warnings };
+  } finally {
+    await media.cleanup();
+  }
+};
+
+/** Maps a successful submission onto Template document fields. */
+const toTemplateFields = ({ definition, components, media, metaResponse }, wabaId) => {
+  const bodyComp = components.find((c) => c.type === 'BODY');
+  const bodyText = bodyComp?.text || definition.body.text || '';
+
+  return {
+    name: definition.name,
+    title: definition.name,
+    language: definition.language,
+    category: definition.category,
+    components,
+    imageUrl: media.cloudinaryUrl || '',
+    mediaId: media.mediaId || '',
+    metaTemplateId: metaResponse.id,
+    metaStatus: metaResponse.status || 'PENDING',
+    wabaId: wabaId || '',
+    message: bodyText,
+    body_text: bodyText,
+    footer: definition.footer || '',
+    footer_text: definition.footer || '',
+    header_type: definition.header.type,
+    header_text: definition.header.text || '',
+    header_image_url: media.cloudinaryUrl || '',
+    sample_values: bodyComp?.example?.body_text?.[0] || [],
+    buttons: definition.buttons,
+    status: 'draft',
+  };
+};
+
+// ── Route helpers ─────────────────────────────────────────────────────────────
+const parseMaybeJson = (value) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed || !/^[[{]/.test(trimmed)) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch (err) {
+    return value;
+  }
+};
+
+const findTemplateByAnyId = async (id) => {
+  const value = String(id || '');
+  if (/^[0-9a-fA-F]{24}$/.test(value)) {
+    const byObjectId = await Template.findById(value);
+    if (byObjectId) return byObjectId;
+  }
+  return (await Template.findOne({ metaTemplateId: value })) || Template.findOne({ name: value });
+};
+
+/** Single place that turns every failure mode into an HTTP response. */
+const respondMetaError = (res, error) => {
+  if (error.validationErrors) {
+    return res.status(error.status || 400).json({
+      success: false,
+      message: error.message,
+      validationErrors: error.validationErrors,
+      warnings: error.warnings || [],
+    });
+  }
+
+  const formatted = formatMetaError(error);
+  const status = error.status || (formatted.code === 190 ? 401 : 400);
+  console.error('❌ Template API Error:', formatted.message, '| code:', formatted.code, '| fbtrace:', formatted.fbtraceId);
+
+  return res.status(status).json({
+    success: false,
+    message: formatted.message,
+    metaError: formatted,
+  });
+};
+
+const isTemplateMissingOnMeta = (formatted) =>
+  /does not exist|not found|could not find|unknown template/i.test(
+    `${formatted.message || ''} ${formatted.details || ''}`
+  );
+
+/**
+ * Meta does not let a submitted template's content change, so "editing" one
+ * means deleting the old definition and creating a replacement under the same
+ * name. If the replacement fails the record degrades to a local draft rather
+ * than pretending the old template still exists.
+ */
+const recreateTemplateOnMeta = async (template, payload, file) => {
+  const creds = await getMetaCredentials();
+  let removedOnMeta = false;
+
+  if (template.metaTemplateId && !String(template.metaTemplateId).startsWith('local_')) {
+    try {
+      await deleteTemplateOnMeta(template.name, template.metaTemplateId);
+      removedOnMeta = true;
+    } catch (err) {
+      const formatted = formatMetaError(err);
+      if (!isTemplateMissingOnMeta(formatted)) {
+        const e = new Error(`Meta could not delete the previous version: ${formatted.message}`);
+        e.status = 400;
+        e.metaError = formatted;
+        throw e;
+      }
+    }
+  }
+
+  try {
+    const result = await submitTemplateToMeta(payload, file);
+    Object.assign(template, toTemplateFields(result, creds.wabaId));
+    await template.save();
+    return { template, warnings: result.warnings };
+  } catch (err) {
+    if (removedOnMeta) {
+      template.metaStatus = 'DRAFT';
+      template.metaTemplateId = `local_${Date.now()}`;
+      await template.save().catch(() => {});
+    }
+    throw err;
+  }
+};
+
+/** Merges request fields onto the stored record to rebuild a full payload. */
+const buildRecreatePayload = (template, body) => {
+  const stored = template.toObject();
+  const pick = (key) => {
+    const incoming = body[key];
+    if (incoming !== undefined && incoming !== null && incoming !== '') return incoming;
+    return stored[key];
+  };
+
+  return {
+    name: pick('name'),
+    language: pick('language'),
+    category: pick('category'),
+    // Only trust an explicit header_type: legacy records hydrate as 'NONE'
+    // which would hide a header that exists in `components`.
+    header_type: body.header_type !== undefined
+      ? body.header_type
+      : (stored.header_type && stored.header_type !== 'NONE' ? stored.header_type : undefined),
+    header_text: pick('header_text'),
+    header_image_url: pick('header_image_url') || stored.imageUrl,
+    body_text: pick('body_text') || stored.message,
+    footer_text: pick('footer_text') || stored.footer,
+    sample_values: Array.isArray(body.sample_values) ? body.sample_values : stored.sample_values,
+    buttons: Array.isArray(body.buttons) ? body.buttons : stored.buttons,
+    components: Array.isArray(body.components) ? body.components : undefined,
+    code_expiration_minutes: body.code_expiration_minutes,
+  };
+};
+
 // ── Meta Broadcast runner ─────────────────────────────────────────────────────
 const runMetaBroadcast = async (template, phoneList) => {
   let sent = 0, failed = 0;
@@ -214,58 +503,260 @@ router.delete('/schedule/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+/**
+ * Direct Send lets Meta generate templates automatically (`source:
+ * 'AUTO_GENERATED'`, usually named `auto_generated_*`). Meta refuses to edit
+ * or delete those, so the CRM must refuse first with a clear message instead of
+ * surfacing a raw Graph error.
+ */
+const isDirectSendTemplate = (template) => Boolean(template) && (
+  template.isAutoGenerated
+  || String(template.source || '').toUpperCase() === 'AUTO_GENERATED'
+  || /^auto_generated/i.test(template.name || '')
+);
+
+const respondTemplateLocked = (res, template) => res.status(409).json({
+  success: false,
+  locked: true,
+  message:
+    `'${template.name}' was generated automatically by Meta Direct Send, and Meta does not allow editing or ` +
+    'deleting these templates. Send a Direct Send message with a different direct_send_config.template_name to ' +
+    'get a new one.',
+});
+
 router.delete('/:id', async (req, res) => {
   try {
-    await Template.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'Template deleted' });
+    const template = await findTemplateByAnyId(req.params.id);
+    if (!template) {
+      return res.json({ success: true, message: 'Template deleted' });
+    }
+    if (isDirectSendTemplate(template)) {
+      return respondTemplateLocked(res, template);
+    }
+
+    let metaDeleted = false;
+    const onMeta = template.metaTemplateId && !String(template.metaTemplateId).startsWith('local_');
+    if (onMeta && template.name) {
+      try {
+        await deleteTemplateOnMeta(template.name, template.metaTemplateId);
+        metaDeleted = true;
+      } catch (err) {
+        const formatted = formatMetaError(err);
+        if (!isTemplateMissingOnMeta(formatted)) {
+          // Keep the record so the user does not lose it while Meta still holds it.
+          return res.status(formatted.code === 190 ? 401 : 400).json({
+            success: false,
+            message: `Meta could not delete '${template.name}': ${formatted.message}`,
+            metaError: formatted,
+          });
+        }
+      }
+    }
+
+    await Template.findByIdAndDelete(template._id);
+    res.json({
+      success: true,
+      metaDeleted,
+      message: metaDeleted ? 'Template removed from Meta and CRM' : 'Template deleted',
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 // PUT /api/template/:id
-// Update an existing template (Utility/Marketing) with image/text/components
+// Local draft edits are applied directly. Once a template is on Meta its content
+// is immutable, so a content change returns `requiresRecreate` and the studio
+// offers "Save & recreate" (POST /:id/recreate) instead.
 router.put('/:id', upload.single('media'), async (req, res) => {
   try {
-    const templateId = req.params.id;
-    let template = await Template.findOne({
-      $or: [{ _id: templateId.match(/^[0-9a-fA-F]{24}$/) ? templateId : null }, { metaTemplateId: templateId }]
-    });
-
+    const template = await findTemplateByAnyId(req.params.id);
     if (!template) {
       return res.status(404).json({ success: false, message: 'Template not found' });
     }
 
-    let { name, language, category, components, header_image_url, message, body_text, footer_text, header_text } = req.body;
-    if (typeof components === 'string') {
-      try { components = JSON.parse(components); } catch (e) {}
+    const body = {
+      ...req.body,
+      components: parseMaybeJson(req.body.components),
+      buttons: parseMaybeJson(req.body.buttons),
+      sample_values: parseMaybeJson(req.body.sample_values),
+    };
+
+    // ── status-only updates (dashboard list view) ────────────────────────────
+    if (isDirectSendTemplate(template) && !(body.recreate === true || body.recreate === 'true')) {
+      return respondTemplateLocked(res, template);
     }
 
-    if (name) template.name = name;
-    if (category) template.category = category;
-    if (language) template.language = language;
-    if (message || body_text) template.message = body_text || message;
-    if (footer_text) template.footer = footer_text;
-    if (Array.isArray(components)) template.components = components;
-
-    if (req.file) {
-      let cloudinaryUrl = null;
-      try {
-        cloudinaryUrl = await uploadToCloudinary(req.file.path, 'zest_eat_templates');
-      } catch (err) {
-        console.error('Cloudinary template upload failed:', err.message);
+    const metaStatusValues = Template.schema.path('metaStatus').enumValues;
+    const statusValues = Template.schema.path('status').enumValues;
+    let statusTouched = false;
+    if (body.metaStatus) {
+      const next = String(body.metaStatus).toUpperCase();
+      if (metaStatusValues.includes(next) && template.metaStatus !== next) {
+        template.metaStatus = next;
+        statusTouched = true;
       }
-      template.imageUrl = cloudinaryUrl || `/uploads/campaigns/${req.file.filename}`;
-    } else if (header_image_url) {
-      template.imageUrl = header_image_url;
+    }
+    if (body.status && statusValues.includes(body.status) && template.status !== body.status) {
+      template.status = body.status;
+      statusTouched = true;
     }
 
-    await template.save();
-    res.json({ success: true, template, message: 'Template updated successfully' });
+    // ── content diff ─────────────────────────────────────────────────────────
+    const nextContent = {
+      name: body.name !== undefined ? String(body.name).trim() : undefined,
+      language: body.language !== undefined ? String(body.language).trim() : undefined,
+      category: body.category !== undefined ? String(body.category).toUpperCase() : undefined,
+      components: Array.isArray(body.components) ? body.components : undefined,
+      header_type: body.header_type !== undefined ? String(body.header_type).toUpperCase() : undefined,
+      header_text: body.header_text !== undefined ? String(body.header_text) : undefined,
+      header_image_url: body.header_image_url !== undefined ? String(body.header_image_url) : undefined,
+      body_text: body.body_text !== undefined ? body.body_text : body.message,
+      footer_text: body.footer_text !== undefined ? body.footer_text : body.footer,
+      buttons: Array.isArray(body.buttons) ? body.buttons : undefined,
+      sample_values: Array.isArray(body.sample_values) ? body.sample_values : undefined,
+    };
+
+    const differs = (a, b) => JSON.stringify(a ?? null) !== JSON.stringify(b ?? null);
+    const changedFields = Object.keys(nextContent).filter(
+      (key) => nextContent[key] !== undefined && differs(nextContent[key], template[key]),
+    );
+    const hasMedia = Boolean(req.file);
+    const isOnMeta = Boolean(template.metaTemplateId) && !String(template.metaTemplateId).startsWith('local_');
+
+    // Nothing content-related changed: a pure status sync.
+    if (!changedFields.length && !hasMedia) {
+      if (statusTouched) await template.save();
+      return res.json({ success: true, template, message: 'Template updated' });
+    }
+
+    const wantsRecreate = body.recreate === true || body.recreate === 'true';
+
+    if (isOnMeta && !wantsRecreate) {
+      return res.status(409).json({
+        success: false,
+        requiresRecreate: true,
+        message: `Meta does not allow editing '${template.name}' once it is submitted. ` +
+          'Recreating deletes the current version and submits a new one for review.',
+        changedFields,
+        template,
+      });
+    }
+
+    // Local draft: rewrite the document in place.
+    if (!isOnMeta) {
+      const payload = buildRecreatePayload(template, {
+        ...body,
+        header_type: nextContent.header_type,
+        header_image_url: nextContent.header_image_url,
+        body_text: nextContent.body_text,
+        footer_text: nextContent.footer_text,
+      });
+      const definition = toDefinition(payload);
+      const warnings = assertValidDefinition(definition);
+
+      let components = template.components;
+      let media = { handle: '', mediaId: '', cloudinaryUrl: '', cleanup: () => {} };
+      let mediaReady = true;
+      try {
+        media = await resolveHeaderMedia(definition, req.file);
+        components = buildComponents(definition, media.handle);
+      } catch (mediaErr) {
+        // WhatsApp is not configured or the upload failed — the draft itself is
+        // still worth saving, so keep the previous components and warn.
+        mediaReady = false;
+        warnings.push({
+          field: 'header',
+          message: `Header media could not be prepared (${mediaErr.message}). The draft was saved without it.`,
+        });
+      }
+
+      try {
+        const bodyComp = components.find((c) => c.type === 'BODY');
+        Object.assign(template, {
+          name: definition.name,
+          title: definition.name,
+          language: definition.language,
+          category: definition.category,
+          components,
+          message: bodyComp?.text || definition.body.text || '',
+          body_text: bodyComp?.text || definition.body.text || '',
+          footer: definition.footer || '',
+          footer_text: definition.footer || '',
+          header_type: definition.header.type,
+          header_text: definition.header.text || '',
+          header_image_url: media.cloudinaryUrl || template.header_image_url || '',
+          imageUrl: media.cloudinaryUrl || template.imageUrl || '',
+          mediaId: media.mediaId || template.mediaId || '',
+          sample_values: bodyComp?.example?.body_text?.[0] || [],
+          buttons: definition.buttons,
+        });
+        await template.save();
+        return res.json({
+          success: true,
+          template,
+          warnings,
+          message: mediaReady ? 'Draft template updated' : 'Draft saved locally — header media needs attention',
+        });
+      } finally {
+        await media.cleanup();
+      }
+    }
+
+    // Explicit recreate against Meta.
+    const payload = buildRecreatePayload(template, body);
+    const result = await recreateTemplateOnMeta(template, payload, req.file);
+
+    res.json({
+      success: true,
+      template: result.template,
+      warnings: result.warnings,
+      message: 'Template recreated on Meta. Approval usually takes a few minutes.',
+    });
   } catch (err) {
-    console.error('Update template error:', err);
-    res.status(500).json({ success: false, message: err.message });
+    console.error('Update template error:', err.message);
+    respondMetaError(res, err);
   }
+});
+
+// POST /api/template/:id/recreate
+// Delete the current Meta version and submit the (edited) content as a new one.
+router.post('/:id/recreate', upload.single('media'), async (req, res) => {
+  try {
+    const template = await findTemplateByAnyId(req.params.id);
+    if (!template) {
+      return res.status(404).json({ success: false, message: 'Template not found' });
+    }
+    if (isDirectSendTemplate(template)) {
+      return respondTemplateLocked(res, template);
+    }
+
+    const body = {
+      ...req.body,
+      components: parseMaybeJson(req.body.components),
+      buttons: parseMaybeJson(req.body.buttons),
+      sample_values: parseMaybeJson(req.body.sample_values),
+    };
+
+    const payload = buildRecreatePayload(template, body);
+    const result = await recreateTemplateOnMeta(template, payload, req.file);
+
+    res.json({
+      success: true,
+      template: result.template,
+      warnings: result.warnings,
+      message: 'Template recreated on Meta. Approval usually takes a few minutes.',
+    });
+  } catch (err) {
+    console.error('Recreate template error:', err.message);
+    respondMetaError(res, err);
+  }
+});
+
+// GET /api/template/presets
+// Category presets + field limits so the studio stays in sync with the backend.
+router.get('/presets', (req, res) => {
+  res.json({ success: true, categories: CATEGORIES, presets: CATEGORY_PRESETS, rules: RULES });
 });
 
 
@@ -281,86 +772,47 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/template/meta
-// Create a new template directly on Meta WhatsApp Cloud API
+// Creates a MARKETING / UTILITY / AUTHENTICATION template on the WhatsApp Cloud
+// API. Accepts the friendly studio payload (header_type/body_text/buttons/...)
+// as well as a legacy raw `components` array.
 router.post('/meta', upload.single('media'), async (req, res) => {
-  let { name, language, category, components } = req.body;
-  const creds = await getMetaCredentials();
-  
-  if (typeof components === 'string') {
-    components = JSON.parse(components);
-  }
-  
-  if (!name || !language || !category || !components) {
-    return res.status(400).json({ success: false, message: 'Missing required Meta template fields' });
-  }
-
   try {
-    // 1. Media handling & component sanitization
-    let cloudinaryUrl = null;
-    if (req.file) {
-      try {
-        cloudinaryUrl = await uploadToCloudinary(req.file.path, 'zest_eat_templates');
-      } catch (err) {
-        console.error('Cloudinary template upload failed:', err.message);
-      }
+    const creds = await getMetaCredentials();
 
-      const handle = await uploadMediaToMeta(req.file.path, req.file.mimetype, req.file.size);
-      
-      let headerIndex = components.findIndex(c => c.type === 'HEADER');
-      if (headerIndex !== -1) {
-        components[headerIndex].format = 'IMAGE';
-        components[headerIndex].example = { header_handle: [handle] };
-      } else {
-        components.unshift({
-          type: 'HEADER',
-          format: 'IMAGE',
-          example: { header_handle: [handle] }
-        });
-      }
-    } else {
-      // Remove any HEADER component claiming IMAGE format without an image example handle
-      components = components.filter(c => !(c.type === 'HEADER' && c.format === 'IMAGE' && (!c.example || !c.example.header_handle)));
-    }
+    const payload = {
+      ...req.body,
+      components: parseMaybeJson(req.body.components),
+      buttons: parseMaybeJson(req.body.buttons),
+      sample_values: parseMaybeJson(req.body.sample_values),
+    };
 
-    const metaResponse = await createTemplateOnMeta(name, language, category, components);
-    
-    // 2b. Upload media again but specifically for sending (to get a media_id instead of a handle)
-    let mediaId = null;
-    if (req.file) {
-      const { uploadMediaForSending } = require('../utils/metaTemplateService');
-      try {
-        mediaId = await uploadMediaForSending(req.file.path, req.file.mimetype);
-      } catch (err) {
-        console.error('Failed to upload media for sending:', err.message);
-      }
-    }
-    
-    // 3. Save in database
-    const template = new Template({
-      name,
-      language,
-      category,
-      components,
-      imageUrl: cloudinaryUrl || (req.file ? `/uploads/${req.file.filename}` : ''),
-      mediaId, // Save the Meta media ID for sending
-      metaTemplateId: metaResponse.id,
-      metaStatus: metaResponse.status || 'PENDING',
-      wabaId: creds.wabaId || '',
-      title: name, // fallback display
-      message: Array.isArray(components) ? (components.find(c => c.type === 'BODY')?.text || 'Meta Template') : 'Meta Template',
-      status: 'draft'
+    const result = await submitTemplateToMeta(payload, req.file);
+    const fields = toTemplateFields(result, creds.wabaId);
+
+    // Re-submitting the same name + language replaces the stale local record
+    // instead of leaving duplicate rows behind.
+    const existing = await Template.findOne({
+      name: fields.name,
+      language: fields.language,
+      isScheduled: { $ne: true },
     });
-    
+    const template = existing || new Template();
+    Object.assign(template, fields);
     await template.save();
-    
-    res.json({ success: true, template, message: 'Template submitted to Meta successfully!' });
-  } catch (error) {
-    const errorMsg = error.metaError?.message || error.message || 'Failed to create template on Meta';
-    console.error('Meta Template API Error:', errorMsg);
-    return res.status(400).json({ 
-      success: false, 
-      message: `Meta API Error: ${errorMsg}` 
+
+    res.json({
+      success: true,
+      template,
+      warnings: result.warnings,
+      preview: {
+        components: result.components,
+        samples: template.sample_values,
+      },
+      message: `Template '${result.definition.name}' submitted to Meta (${result.metaResponse.status || 'PENDING'}). Approval usually takes a few minutes.`,
     });
+  } catch (error) {
+    console.error('Meta Template API Error:', error.message);
+    respondMetaError(res, error);
   }
 });
 
@@ -396,6 +848,9 @@ router.post('/import-meta', async (req, res) => {
       imageUrl: imageUrl || '', // Save user provided imageUrl if applicable
       title: metaData.name,
       message: 'Imported Meta Template',
+      source: metaData.source || '',
+      isAutoGenerated: String(metaData.source || '').toUpperCase() === 'AUTO_GENERATED'
+        || /^auto_generated/i.test(metaData.name || ''),
       status: 'draft'
     });
 
@@ -448,6 +903,9 @@ const syncMetaTemplatesHandler = async (req, res) => {
         existing.language = mt.language || existing.language;
         existing.category = mt.category || existing.category;
         existing.wabaId = currentWaba;
+        existing.source = mt.source || '';
+        existing.isAutoGenerated = String(mt.source || '').toUpperCase() === 'AUTO_GENERATED'
+          || /^auto_generated/i.test(mt.name || '');
         if (bodyComp?.text) existing.message = bodyComp.text;
         if (footerComp?.text) existing.footer = footerComp.text;
 
@@ -483,6 +941,9 @@ const syncMetaTemplatesHandler = async (req, res) => {
           metaTemplateId: mt.id,
           metaStatus: mt.status || 'APPROVED',
           wabaId: currentWaba,
+          source: mt.source || '',
+          isAutoGenerated: String(mt.source || '').toUpperCase() === 'AUTO_GENERATED'
+            || /^auto_generated/i.test(mt.name || ''),
           title: mt.name,
           message: bodyComp?.text || mt.name,
           footer: footerComp?.text || '',

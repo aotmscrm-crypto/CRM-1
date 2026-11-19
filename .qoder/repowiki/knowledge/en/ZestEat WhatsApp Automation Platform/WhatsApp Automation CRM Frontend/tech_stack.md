@@ -1,0 +1,1 @@
+React 19 + Vite 8 build; Tailwind CSS v4 + DaisyUI for utility styling; Radix UI Themes for dark theme tokens; react-router-dom v7 for routing; zustand v5 for global store; react-hook-form for form validation; lucide-react + react-icons for icons; three.js / @react-three/fiber + drei for 3D assets; socket.io-client for real-time channels; xlsx for spreadsheet import.
